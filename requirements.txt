@@ -1,0 +1,27 @@
+# Core engine
+pyspark
+duckdb
+sqlglot
+
+# Orchestration
+langgraph
+langchain
+
+# Observability / eval
+mlflow
+
+# Knowledge / embeddings (Phase 2)
+sentence-transformers
+pgvector
+psycopg2-binary
+
+# Graph (Phase 2)
+neo4j
+
+# API (Phase 5)
+fastapi
+uvicorn[standard]
+
+# LLM clients (Phase 3)
+ollama
+google-generativeai
