@@ -55,6 +55,42 @@ threshold exists, and why our analyzer only flags tables genuinely under the lim
 
 ---
 
+## Predicate pushdown & "sargability" (Phase 2b)
+**Predicate pushdown** = applying a `WHERE` filter as early as possible — ideally
+*inside the file scan* — so less data is read and moved. Spark/Catalyst does this
+automatically for simple predicates, and for Parquet it passes them to the reader
+(shown as `PushedFilters: [...]` in the plan).
+
+**Sargable** ("Search ARGument ABLE") = a predicate the engine can satisfy with an
+index/scan filter because the **column appears bare**, compared to a constant:
+`l_shipdate >= DATE '1994-01-01'`. **Non-sargable** = the column is wrapped in a
+function: `YEAR(l_shipdate) = 1994`. The function makes the predicate opaque — the
+reader can't push it, so Spark reads **every row** then filters.
+
+The fix is a **logical rewrite** to an equivalent sargable range:
+`YEAR(col) = 1994`  ⟺  `col >= DATE '1994-01-01' AND col < DATE '1995-01-01'`.
+Now it appears in `PushedFilters` and far fewer rows flow upward.
+
+- **Why neither Catalyst nor AQE does this:** Catalyst treats `YEAR(col)` as an
+  opaque expression and won't rewrite it into a range; AQE only reacts to runtime
+  shuffle stats. This is a *semantic* rewrite — squarely the optimizer-agent's job.
+- **Why it needs the Validator:** unlike a hint (physical-only), this changes the
+  logical plan. If the rewrite were wrong (e.g. off-by-one on the upper bound) the
+  answer would change — so we prove equivalence empirically.
+- **Implementation nuance:** SQLGlot's Spark dialect models `YEAR(x)` as
+  `Year(TO_DATE(x))`, so we must dig out the bare `Column` (`.find(exp.Column)`),
+  not use `.this` — otherwise the rewrite leaves `TO_DATE(col)` and stays
+  non-sargable. (Found via an isolated test before running Spark.)
+- **Row-group skipping caveat (observed!):** in our run the rewrite correctly put
+  the range into `PushedFilters`, but runtime was **0.99× (flat)**. Why: `lineitem`
+  isn't sorted by `l_shipdate`, so every row group's min/max spans the full date
+  range → **no row groups skipped**; the reader still touches all 6M rows. Pushdown
+  skips whole row groups only when data is **clustered/sorted by the filter
+  column**. Lesson: "the optimizer did the right thing" (plan-level win, always
+  true) and "it ran faster" (runtime win, needs data clustering) are **separate
+  claims**. To make the runtime win appear, write a copy of the table sorted by the
+  filter column and re-run — row groups then skip and the speedup shows.
+
 ## Shuffle — the thing optimization is mostly about
 A **shuffle** redistributes data across the cluster so rows with the same key end
 up together (needed for joins, `groupBy`, `distinct`, repartition). It writes
@@ -121,6 +157,33 @@ to make the value undeniable.
 - This is why our timing uses an action. We benchmark with the **`noop` write
   sink** (`.write.format("noop")`) — it forces full execution but discards output,
   so we time the *computation* without `collect`/serialization overhead skewing it.
+
+## Neo4j — storing the plan as a graph (Phase 2c)
+**Neo4j is a graph database.** Instead of tables/rows it stores the **property
+graph model**: *nodes* (entities), *relationships* (typed, directed connections),
+*properties* (key/values on both), *labels* (tags grouping nodes). Our plan is
+stored as `:Op` nodes connected by `(parent)-[:CHILD]->(child)` — the on-disk
+structure mirrors the plan's structure.
+
+- **Cypher** is the query language; you draw the pattern: `(a:Op)-[:CHILD]->(b)`.
+  `-[:CHILD*0..]->` follows the edge any number of hops = whole-tree traversal.
+- **Index-free adjacency** is the speed secret: each node holds **direct pointers
+  to its neighbors**, so following a relationship is ~O(1) — no index lookup, no
+  table scan. Walking an N-hop path is O(N), independent of DB size.
+
+**Why better than a relational store *here*:** a Spark plan IS a tree/DAG, and our
+questions are traversals ("show the whole plan", "find all joins", "what feeds this
+join", "diff before vs after"). In SQL you'd need a `nodes`+`edges` table and a
+**recursive self-join** to walk the tree (awkward, slower with depth). In Neo4j
+it's one short pattern that stays fast (pointer-chasing). Bonus: Neo4j's browser
+renders nodes/arrows natively, and the future React Flow visualizer reads this same
+graph — the data model and the picture are the same thing.
+
+**When NOT to use it (honesty):** if data is naturally tabular and queries are
+aggregations (`SUM ... GROUP BY`), a relational/columnar store wins. Graph DBs win
+only when *relationships and multi-hop traversals are the point* — query plans,
+social graphs, fraud rings, dependency trees. For us it's a genuine fit, not
+résumé-padding.
 
 ## TPC-H — our dataset
 Industry-standard analytics benchmark: 8 tables (a `lineitem` fact + dimensions)

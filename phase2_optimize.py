@@ -16,15 +16,16 @@ For a bigger speedup, regenerate data at scale: python data/tpch_setup.py --sf 1
 """
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import mlflow
 from pyspark.sql import SparkSession
 
 from agents.optimizer import Optimizer
-from agents.plan_analyzer import PlanAnalyzer, SHUFFLE_JOIN_OPS
+from agents.plan_analyzer import PlanAnalyzer
+from agents.rules import RuleContext
 from agents.validator import frames_match
+from bench import executed_plan, join_ops, time_query
 from observability.tracing import init_mlflow, pipeline_run
 
 PARQUET_DIR = Path(__file__).resolve().parent / "data" / "tpch"
@@ -54,26 +55,6 @@ def make_spark() -> SparkSession:
     )
 
 
-def time_query(spark: SparkSession, sql: str, runs: int = 3) -> float:
-    """Min wall-clock over N runs, forcing full execution via the noop sink
-    (no collection overhead). Min reduces JIT/cache noise."""
-    times = []
-    for _ in range(runs):
-        t = time.perf_counter()
-        spark.sql(sql).write.format("noop").mode("overwrite").save()
-        times.append(time.perf_counter() - t)
-    return min(times)
-
-
-def join_ops(plan_text: str) -> list[str]:
-    found = []
-    for line in plan_text.splitlines():
-        for op in (*SHUFFLE_JOIN_OPS, "BroadcastHashJoin"):
-            if op in line:
-                found.append(op)
-    return found
-
-
 def main() -> None:
     init_mlflow()
     spark = make_spark()
@@ -101,9 +82,10 @@ def main() -> None:
             return
 
         # --- optimize ---
-        opt = optimizer.optimize(DEMO_QUERY, analysis.broadcast_candidates)
-        opt_plan = spark.sql(opt.optimized_sql)._jdf.queryExecution() \
-            .executedPlan().toString()
+        opt = optimizer.optimize(
+            DEMO_QUERY, RuleContext(broadcast_candidates=analysis.broadcast_candidates)
+        )
+        opt_plan = executed_plan(spark, opt.optimized_sql)
         print("\nOptimized join operators:", join_ops(opt_plan) or ["(none)"])
 
         # --- validate: optimized result must equal the original result ---

@@ -1,54 +1,61 @@
 """
-Optimizer agent - apply the fix the Plan-Analyzer found.
+Optimizer agent runs a registry of optimization rules over a query.
 
-v1 implements ONE pattern directly: the broadcast-join fix. Given the small
-tables the analyzer flagged, it injects a Spark broadcast hint:
+The optimizer itself is now tiny: it iterates the rule registry, letting each
+rule transform the SQL in turn (rules chain a later rule sees the earlier
+rule's output). All the pattern logic lives in agents/rules.py, so adding a
+pattern never touches this loop.
 
-    SELECT /*+ BROADCAST(nation, supplier) */ ...
-
-That hint forces Spark to broadcast those tables, overriding whatever made it
-pick a SortMergeJoin (missing stats, a conservative threshold, AQE off). The
-output is unchanged, only the execution strategy changes which is why the
-Validator must confirm identical results afterwards.
-
-Why hardcoded (for now): with a SINGLE pattern, "retrieve the right fix" is
-retrieving from a list of one pgvector RAG would add infrastructure and zero
-information. When we add more patterns, the retrieval step swaps in here without
-touching the optimize->validate->measure loop around it.
+Each applied rule is reported so the runner can validate + measure + log it.
 """
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from agents.rules import DEFAULT_RULES, RuleContext, RuleResult, Rule
 from observability.tracing import traced
 
 
 @dataclass
-class OptimizationResult:
+class OptimizationReport:
     original_sql: str
     optimized_sql: str
-    applied: bool
-    pattern: str
-    broadcast_tables: list[str]
+    applied: list[RuleResult] = field(default_factory=list)
+
+    @property
+    def did_optimize(self) -> bool:
+        return bool(self.applied)
+
+    @property
+    def patterns(self) -> list[str]:
+        return [r.rule for r in self.applied]
+
+    @property
+    def pattern(self) -> str:
+        return ", ".join(self.patterns) if self.applied else "none"
+
+    @property
+    def broadcast_tables(self) -> list[str]:
+        return [t for r in self.applied
+                for t in r.detail.get("broadcast_tables", [])]
+
+    @property
+    def rewritten_columns(self) -> list[str]:
+        return [c for r in self.applied for c in r.detail.get("columns", [])]
 
 
 class Optimizer:
-    @traced("optimizer")
-    def optimize(self, spark_sql: str, broadcast_tables: list[str]) -> OptimizationResult:
-        if not broadcast_tables:
-            return OptimizationResult(spark_sql, spark_sql, False, "none", [])
+    def __init__(self, rules: list[Rule] | None = None):
+        self.rules = rules if rules is not None else DEFAULT_RULES
 
-        hint = f"/*+ BROADCAST({', '.join(broadcast_tables)}) */"
-        # Insert the hint right after the first SELECT keyword (case-insensitive).
-        optimized, n = re.subn(
-            r"(?i)\bSELECT\b", f"SELECT {hint}", spark_sql, count=1
-        )
-        applied = n == 1
-        return OptimizationResult(
-            original_sql=spark_sql,
-            optimized_sql=optimized if applied else spark_sql,
-            applied=applied,
-            pattern="broadcast_join" if applied else "none",
-            broadcast_tables=broadcast_tables,
-        )
+    @traced("optimizer")
+    def optimize(self, spark_sql: str, ctx: RuleContext | None = None) -> OptimizationReport:
+        ctx = ctx or RuleContext()
+        current = spark_sql
+        applied: list[RuleResult] = []
+        for rule in self.rules:
+            result = rule.apply(current, ctx)
+            if result is not None:
+                current = result.optimized_sql
+                applied.append(result)
+        return OptimizationReport(original_sql=spark_sql, optimized_sql=current, applied=applied)

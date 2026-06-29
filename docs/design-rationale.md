@@ -94,12 +94,45 @@ broadcast?" — independent of whatever (possibly stale) stats Spark has.
 - *Advantage:* we catch the exact case Spark gets wrong (missing stats → no
   broadcast) by using a source of truth Spark ignored.
 
+### Pattern 2 — sargable-predicate rewrite (predicate pushdown)
+- **What:** rewrite a non-sargable filter `YEAR(l_shipdate) = 1994` into the
+  equivalent sargable range `l_shipdate >= DATE '1994-01-01' AND < '1995-01-01'`,
+  so Spark can push it into the Parquet scan (`PushedFilters`).
+- **Why this pattern, deliberately:** it's the case **neither Catalyst nor AQE
+  fixes** — Catalyst treats `YEAR(col)` as opaque, AQE only reacts to shuffle
+  stats. It directly answers "what are we doing that Spark doesn't?"
+- **Why it matters for the architecture:** it's a **logical rewrite** (changes the
+  plan's meaning if wrong), so the Validator is *load-bearing* here, not
+  belt-and-suspenders. This is the "risky transform that genuinely needs
+  validation" half of the spectrum from Phase 2's validation-cost note.
+- **Advantage:** done over the **AST** (SQLGlot), not string hacks — the optimizer
+  now reasons about query *structure*, which is what lets it grow past one trick.
+- **Honest trade-off:** the runtime win depends on selectivity and whether row
+  groups can be skipped (data isn't sorted by shipdate). The robust, always-true
+  result is the predicate moving into `PushedFilters` + fewer rows scanned.
+
 ### How this differs from AQE (the key objection)
 AQE is reactive, per-query, narrow, and leaves no artifact. It can't prove
 correctness, explain itself, persist a fix, or cover non-join patterns (pushdown,
 pruning, caching, join reorder, whole-workload). We build the **validated,
 observable system around optimization** — broadcast join just proves the loop.
 (Full treatment in learning-notes.md → AQE section.)
+
+### The rule registry (generalizing past one-off methods)
+Patterns are now pluggable **Rules** (`agents/rules.py`), each a self-contained
+`apply(sql, ctx) -> RuleResult | None`. The Optimizer just iterates the registry
+and lets rules **chain** (a later rule sees the earlier rule's output). Adding a
+pattern = adding a Rule; the optimize→validate→measure loop never changes.
+- Categories: `join_strategy` (physical hint, safe) vs `predicate_pushdown`
+  (logical rewrite, validation load-bearing).
+- Current rules: `broadcast_join`, `sargable_year`, `substring_prefix`
+  (`SUBSTRING(col,1,k)='US'` → `col LIKE 'US%'`, pushes as StringStartsWith).
+- **Why this matters:** "predicate pushdown" isn't one rewrite — each non-sargable
+  shape has its own equivalent (YEAR→range, SUBSTRING→LIKE, CAST-strip, …) and
+  some aren't rewritable at all (MONTH, UPPER) where the rule correctly *doesn't
+  fire*. A registry is the honest structure for a growing catalog — and it turns
+  "which fix applies?" into a *retrieval* problem, which is exactly what pgvector
+  will answer.
 
 ### Why hardcode the fix before adding RAG
 With one pattern, "retrieve the right fix" is retrieving from a list of one —

@@ -43,6 +43,51 @@ class PlanNode:
 
 
 @dataclass
+class GraphNode:
+    id: int          # stable id within one plan
+    op: str          # operator type
+    detail: str      # raw line
+
+
+@dataclass
+class PlanGraph:
+    nodes: list[GraphNode]
+    edges: list[tuple[int, int]]   # (parent_id, child_id)
+
+
+def parse_plan_tree(plan_text: str) -> PlanGraph:
+    """Turn Spark's indented physical-plan text into a parent->child DAG.
+
+    Spark draws the operator tree with leading art (`+-`, `:-`, `:`, spaces). The
+    indentation depth of each line encodes the tree: a deeper line is a child of
+    the nearest shallower line above it. We track that with an indent stack, so
+    joins (two children at the same deeper indent) naturally get two edges.
+    """
+    nodes: list[GraphNode] = []
+    edges: list[tuple[int, int]] = []
+    stack: list[tuple[int, int]] = []   # (indent, node_id), shallow -> deep
+    nid = 0
+    for raw in plan_text.splitlines():
+        if not raw.strip():
+            continue
+        # Indent = count of leading tree-art chars before the operator label.
+        indent = len(raw) - len(raw.lstrip(" :+-"))
+        core = raw[indent:]
+        m = re.match(r"(?:\*\(\d+\)\s*)?([A-Za-z]+)", core)
+        if not m:
+            continue
+        nid += 1
+        nodes.append(GraphNode(id=nid, op=m.group(1), detail=raw.strip()))
+        # Pop siblings/deeper entries; the remaining top is this node's parent.
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if stack:
+            edges.append((stack[-1][1], nid))
+        stack.append((indent, nid))
+    return PlanGraph(nodes=nodes, edges=edges)
+
+
+@dataclass
 class AnalysisResult:
     plan_text: str                       # full physical plan, as Spark prints it
     nodes: list[PlanNode]                # flattened operator list
