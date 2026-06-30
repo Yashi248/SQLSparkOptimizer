@@ -6,6 +6,13 @@ __pycache__/
 *.pyo
 .env
 .pytest_cache/
+*.log
+
+# --- Packaging build artifacts (from `pip install -e .` / builds) ---
+build/
+dist/
+*.egg-info/
+.eggs/
 
 # --- Generated data (TPC-H Parquet is ~300MB; regenerate via data/tpch_setup.py) ---
 *.parquet

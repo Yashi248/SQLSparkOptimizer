@@ -33,7 +33,7 @@ def join_ops(plan_text: str) -> list[str]:
 
 
 def pushed_filters(plan_text: str) -> list[str]:
-    """Extract the `PushedFilters: [...]` lists from FileScan nodes — this is the
+    """Extract the `PushedFilters: [...]` lists from FileScan nodes this is the
     direct evidence that a predicate was (or wasn't) pushed into the scan."""
     found = []
     for m in re.finditer(r"PushedFilters:\s*\[([^\]]*)\]", plan_text):

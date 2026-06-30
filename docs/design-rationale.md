@@ -16,6 +16,12 @@ the part those demos skip.
   against ground truth. We never claim "faster" without "and identical output."
 - **Instrumented from line one.** Observability (MLflow traces/runs) was wired in
   Phase 1, not bolted on at the end — so every claim is backed by logged data.
+- **Observability is best-effort, never load-bearing.** If the MLflow server is
+  down, the pipeline still runs — a fast 1s reachability check disables telemetry
+  with a warning instead of crashing (or hanging on MLflow's minutes-long retry).
+  A monitoring layer that takes down the system it monitors is a bug; tracing must
+  never change behavior. (Learned the hard way: a missing `mlflow ui` once hung a
+  run for 4 minutes then crashed it — fixed in observability/tracing.py.)
 - **Narrow but complete.** One pattern, fully validated and measured, beats ten
   half-built ones. The architecture is proven on a slice, then widened.
 - **Each agent is swappable.** Translator, Analyzer, Optimizer, Validator are
@@ -165,6 +171,60 @@ output); and **tier rigor by risk** (skip/sample safe hints, full-validate logic
 rewrites). This is "difficulty-based cost routing" applied to the validator.
 
 ---
+
+## Phase 3 — Orchestration (LangGraph)
+
+The agents are wired into one explicit state graph with a convergence loop and a
+revert-on-failure branch. Generated live with `python phase3_orchestrate.py --draw`:
+
+```mermaid
+graph TD;
+	__start__([start]):::first
+	translate(translate)
+	analyze(analyze)
+	retrieve(retrieve)
+	optimize(optimize)
+	validate(validate)
+	__end__([end]):::last
+	__start__ --> translate;
+	translate --> analyze;
+	analyze --> retrieve;
+	retrieve --> optimize;
+	optimize --> validate;
+	validate -. loop .-> analyze;
+	validate -. done .-> __end__;
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+```
+
+- **Retrieval drives optimization:** analyze names a symptom → pgvector picks the
+  rule → optimizer applies exactly that rule. RAG→action, not RAG-as-decoration.
+- **The loop is a conditional edge:** `validate` routes via `decide()` back to
+  `analyze` (re-examine the now-optimized query) or to END. Converges when no new
+  symptom is found.
+- **Safety branch:** validation fail → revert to last good SQL → END.
+- **Why LangGraph (honest):** a while-loop would work for deterministic agents; the
+  graph makes structure explicit/inspectable and is the right foundation for the
+  LLM-backed nodes next (streaming, checkpoints, human-in-the-loop). See
+  learning-notes → LangGraph.
+
+### Cost routing (the model-tier story)
+The thesis: *send each stage to the right-sized model and measure what it costs.*
+- **Mechanical stages** (translate, analyze, optimize) are deterministic → routed
+  to the **LOCAL tier at $0**. (Deterministic is even cheaper than a local model —
+  and the fact that translation is trivial *proves* the thesis rather than
+  undercutting it.)
+- **The one reasoning stage** — `explain` (why each fix helps, grounded in the
+  retrieved patterns) — routes to the **SMART tier**.
+- A **ModelRouter** (`routing.py`) keeps a ledger of `(stage, tier, model, tokens,
+  est_cost)` and publishes a cost-per-stage breakdown to MLflow. Cost is estimated
+  from real per-token pricing even on free tiers, so the "what this costs at scale"
+  story is concrete.
+- **Graceful tiering:** SMART = Gemini (if `GEMINI_API_KEY`) → local Ollama (if
+  running + model pulled) → deterministic template. ANY backend failure (no key,
+  model not pulled, server down) degrades to the next option — the pipeline never
+  crashes because a model is unavailable (same best-effort principle as
+  observability). Set a key or `ollama pull` to light up the real LLM tier.
 
 ## Phases ahead (rationale to fill in as we build)
 

@@ -195,6 +195,35 @@ data and the queries. **Scale factor (sf)** sets size: `sf=1` ≈ 1 GB, `sf=0.1`
 
 # Part B — Python & Engineering Patterns
 
+## LangGraph — orchestrating the agents (Phase 3)
+LangGraph builds **stateful workflows as graphs**: **nodes** (functions) connected
+by **edges**, with a shared typed **state** flowing through. Built for LLM agent
+systems that need branching, loops, and "decide next step from what just happened."
+
+Mapped to orchestrator/graph.py:
+- **State** = `GState` TypedDict (current_sql, applied_rules, speedup, ...). Each
+  node returns a *partial* dict; LangGraph **merges** it into the running state.
+- **Node** = `analyze_node`, `retrieve_node`, ... (read state -> return update).
+- **Edge** = `add_edge("translate","analyze")` (unconditional).
+- **Conditional edge** = `add_conditional_edges("validate", decide, {...})` — the
+  `decide()` router returns "loop" or "done", which is how the convergence loop and
+  the revert-on-failure branch are expressed. `compile()` -> `.invoke(state)` runs it.
+
+**How the loop runs:** translate→analyze→retrieve→optimize→validate, then `decide`
+inspects state: "loop" jumps back to `analyze` (now on the optimized SQL) for
+another pass; "done" goes to END. Second pass finds no symptoms -> converges.
+
+**Honest "why not just a while-loop?":** for our *deterministic* agents a while-loop
+would work. LangGraph's value: (1) the pipeline structure is explicit/inspectable
+(can render as a diagram) and routing is a named function, not nested ifs;
+(2) state threading is automatic; (3) it's the foundation for the agentic features
+we add next — **streaming** (watch state after each node), **checkpointing**
+(pause/resume, retry a node, human-in-the-loop approval before a risky fix),
+LLM-conditional routing. Mild overkill for pure deterministic code; the right
+foundation the instant nodes become LLM-backed (cost routing). It's also the
+industry-standard multi-agent framework, so the "orchestrated with LangGraph"
+framing is both truthful and a real signal.
+
 ## Decorators & `@traced`
 A **decorator** wraps a function to add behavior without editing the function.
 `@traced("translator")` over `translate()` makes Python do
@@ -217,6 +246,30 @@ in the middle, records result/latency/status, and returns the original result.
   Lives in the runs / Model-training tab. "What was the outcome for this query?"
 - Spans fired inside a run **nest under** it: run (query) → spans (agents). That
   hierarchy is the raw material for the Phase 4 eval dashboard.
+
+## RAG retrieval & embedding quality (pgvector)
+**Embedding** = turning text into a vector (list of numbers) such that similar
+*meanings* land near each other. We embed each optimization pattern's doc and
+store the vectors in **pgvector** (Postgres + the `vector` type). To find the
+right fix for a problem, we embed the problem text and ask for the nearest vectors
+by **cosine distance** (`<=>` in pgvector; lower = more similar). No keyword
+matching — "giant table and a tiny lookup table" finds *broadcast join* by meaning.
+
+**Two things that determine retrieval quality (learned by getting it wrong):**
+1. **The docs you embed.** Symptom-only text was too thin; enriching each doc with
+   `title + symptom + keywords` (the distinctive terms) made the vectors more
+   separable.
+2. **The embedding model.** `all-MiniLM-L6-v2` (384-dim, small/fast) couldn't
+   separate "sort-merge join" from "partition pruning" — distances all bunched
+   near 0.5 (the tell: no resolution). Switching to `all-mpnet-base-v2` (768-dim,
+   higher quality) ranked all patterns correctly. Trade-off: bigger download +
+   slower encode, irrelevant for a handful of docs.
+> Lesson: RAG isn't magic retrieval — quality = **good knowledge docs + a model
+> with enough resolution**. When results bunch together, suspect the model first.
+
+**Scale note:** with thousands of vectors you'd add an index (pgvector `ivfflat`
+or `hnsw`) so search is approximate-but-fast instead of scanning every row. With 5
+docs a full scan is instant, so we skip it.
 
 ## SQL dialect transpilation (SQLGlot)
 Different SQL engines have slightly different syntax (date math, function names,

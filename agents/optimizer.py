@@ -49,11 +49,17 @@ class Optimizer:
         self.rules = rules if rules is not None else DEFAULT_RULES
 
     @traced("optimizer")
-    def optimize(self, spark_sql: str, ctx: RuleContext | None = None) -> OptimizationReport:
+    def optimize(self, spark_sql: str, ctx: RuleContext | None = None,
+                 only: list[str] | None = None) -> OptimizationReport:
+        """Run the rule registry over the query. If `only` is given, apply just
+        those rules by name (this is how retrieval drives optimization — the
+        analyzer detects a symptom, pgvector picks the fix, we apply that rule)."""
         ctx = ctx or RuleContext()
         current = spark_sql
         applied: list[RuleResult] = []
         for rule in self.rules:
+            if only is not None and rule.name not in only:
+                continue
             result = rule.apply(current, ctx)
             if result is not None:
                 current = result.optimized_sql
