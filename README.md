@@ -75,19 +75,41 @@ sqlspark workload --data data/tpch --queries data/tpch_queries.json --all
 
 Optional services (all Docker, all free): **Neo4j** (plan graph), **pgvector** (RAG), **MLflow UI** (traces), **Ollama/Gemini** (the reasoning tier). Every one is best-effort - the pipeline runs without them.
 
-## In production
+## Use cases
 
-Runs inside your Spark — your data never leaves. Drop one call into your pipeline:
+Runs inside your own Spark against your own tables — nothing is copied out. Pick the case that fits:
 
+**1. Optimize one query in a job** — get a validated, faster rewrite before you run it.
+
+```python
+from sqlspark_optimizer import optimize
+
+# you already have a SparkSession `spark` with your tables registered
+result = optimize(sql, spark, parquet_dir="/warehouse/tables")
+if result.optimized:                       # a fix was found AND proven identical
+    df = spark.sql(result.optimized_sql)   # run the faster version
+    print(result.applied_rules, f"{result.speedup:.1f}x")
 ```
-your query ─▶ optimize(sql, spark) ─▶ faster SQL, proven identical, $ saved
+
+**2. Audit a whole workload** — point it at your query history (or a folder of `.sql`) and rank by impact.
+
+```bash
+sqlspark workload --data /warehouse/tables --queries query_history.json --all
+# → ranked table: which queries can be sped up, the fix, and how much
 ```
 
-Three ways to plug in:
+**3. CI performance check** — run it on the queries a PR changed; every rewrite is validated, so it never ships a wrong result.
 
-- **Advisory** — suggests validated rewrites, an engineer approves
-- **CI gate** — blocks slow queries before they merge
-- **Batch audit** — ranks your whole workload by wasted $
+```bash
+sqlspark optimize models/orders.sql --data ./sample_tables --dialect spark
+# exit with the rewrite + speedup; wire into your CI to flag or block
+```
+
+**4. Inspect a single plan** — see the before/after physical plan and which operator changed.
+
+```bash
+python phase2c_graph.py        # writes before/after plans to Neo4j to browse
+```
 
 ## Tech stack
 
