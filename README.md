@@ -35,13 +35,7 @@ graph TD;
   validate -. done .-> explain;
 ```
 
-## What happens in each phase
-
-- **Phase 0 - Environment + data.** DuckDB generates the TPC-H dataset _and_ the 22 benchmark queries _and_ a trusted correctness oracle. Foundation + a built-in answer key.
-- **Phase 1 - The spine (translate + validate).** Translate SQL→Spark, run it, and **prove** it returns the same result as DuckDB. Validation is built _before_ optimization, so everything downstream is trustworthy by construction. Instrumented in MLflow from here on.
-- **Phase 2 - Optimize → validate → measure.** Detect a **broadcast-join** anti-pattern from the physical plan, apply a planner hint, prove the answer is unchanged, and measure the speedup (**2.8–4.3×**). Then a second, harder pattern **predicate pushdown** (a sargable rewrite AQE/Catalyst _don't_ do) - generalized into a pluggable **rule registry**. Plans are persisted to **Neo4j** as a queryable graph.
-- **Phase 3 - Orchestration + cost routing.** All agents wired into a **LangGraph** state graph with a convergence loop and revert-on-failure safety. Retrieval _drives_ optimization (symptom → pgvector → rule). **Cost routing** sends mechanical stages to a $0 local tier and the one reasoning stage to a smart model, logging cost per stage.
-- **Phase 4 - Eval layer.** The differentiator: a curated eval set with _known expected fixes_, scored into published metrics. This turns every claim into a measured number.
+> Phase-by-phase walkthrough and the reasoning behind every decision live in [`docs/design-rationale.md`](docs/design-rationale.md).
 
 ## Measured results (TPC-H sf=1)
 
@@ -80,6 +74,20 @@ sqlspark workload --data data/tpch --queries data/tpch_queries.json --all
 ```
 
 Optional services (all Docker, all free): **Neo4j** (plan graph), **pgvector** (RAG), **MLflow UI** (traces), **Ollama/Gemini** (the reasoning tier). Every one is best-effort - the pipeline runs without them.
+
+## In production
+
+Runs inside your Spark — your data never leaves. Drop one call into your pipeline:
+
+```
+your query ─▶ optimize(sql, spark) ─▶ faster SQL, proven identical, $ saved
+```
+
+Three ways to plug in:
+
+- **Advisory** — suggests validated rewrites, an engineer approves
+- **CI gate** — blocks slow queries before they merge
+- **Batch audit** — ranks your whole workload by wasted $
 
 ## Tech stack
 
