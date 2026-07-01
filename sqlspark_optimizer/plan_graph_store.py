@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from neo4j import GraphDatabase
 
-from agents.plan_analyzer import PlanGraph
+from sqlspark_optimizer.agents.plan_analyzer import PlanGraph
 
 
 class PlanGraphStore:

@@ -25,14 +25,14 @@ from typing import TypedDict
 import sqlglot
 from sqlglot import exp
 
-from agents.optimizer import Optimizer
-from agents.plan_analyzer import AnalysisResult, PlanAnalyzer
-from agents.rules import RuleContext
-from agents.translator import Translator
-from agents.validator import frames_match
-from bench import time_query
-from observability.tracing import traced
-from routing import ModelRouter
+from sqlspark_optimizer.agents.optimizer import Optimizer
+from sqlspark_optimizer.agents.plan_analyzer import AnalysisResult, PlanAnalyzer
+from sqlspark_optimizer.agents.rules import RuleContext
+from sqlspark_optimizer.agents.translator import Translator
+from sqlspark_optimizer.agents.validator import frames_match
+from sqlspark_optimizer.bench import time_query
+from sqlspark_optimizer.observability.tracing import traced
+from sqlspark_optimizer.routing import ModelRouter
 
 from langgraph.graph import START, END, StateGraph
 
@@ -221,7 +221,7 @@ class OptimizerGraph:
         if conn is None:
             return fallback
         try:
-            from knowledge import kb
+            from sqlspark_optimizer.knowledge import kb
             top = kb.retrieve(conn, text, 1)[0]
             return top.rule or fallback
         except Exception:  # noqa: BLE001 - retrieval is best-effort
@@ -230,7 +230,7 @@ class OptimizerGraph:
     def _kb(self):
         if self._kb_conn is _UNSET:
             try:
-                from knowledge import kb
+                from sqlspark_optimizer.knowledge import kb
                 self._kb_conn = kb.connect()
             except Exception:  # noqa: BLE001
                 print("[orchestrator] pgvector unavailable - using direct "

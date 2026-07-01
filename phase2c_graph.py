@@ -14,12 +14,12 @@ Run:  python phase2c_graph.py
 """
 from __future__ import annotations
 
-from agents.optimizer import Optimizer
-from agents.plan_analyzer import PlanAnalyzer, parse_plan_tree
-from agents.rules import RuleContext
-from bench import executed_plan, join_ops
+from sqlspark_optimizer.agents.optimizer import Optimizer
+from sqlspark_optimizer.agents.plan_analyzer import PlanAnalyzer, parse_plan_tree
+from sqlspark_optimizer.agents.rules import RuleContext
+from sqlspark_optimizer.bench import executed_plan, join_ops
 from phase2_optimize import DEMO_QUERY, PARQUET_DIR, make_spark
-from plan_graph_store import PlanGraphStore
+from sqlspark_optimizer.plan_graph_store import PlanGraphStore
 
 
 def main() -> None:

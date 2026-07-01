@@ -25,8 +25,8 @@ from pathlib import Path
 import mlflow
 from pyspark.sql import SparkSession
 
-from observability.tracing import init_mlflow, pipeline_run
-from orchestrator.graph import OptimizerGraph
+from sqlspark_optimizer.observability.tracing import init_mlflow, pipeline_run
+from sqlspark_optimizer.orchestrator.graph import OptimizerGraph
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PARQUET_DIR = DATA_DIR / "tpch"

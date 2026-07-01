@@ -9,7 +9,7 @@ Run:  python -m knowledge.ingest_spark_docs
 """
 from __future__ import annotations
 
-from knowledge.kb import connect, init_schema, ingest
+from sqlspark_optimizer.knowledge.kb import connect, init_schema, ingest
 
 
 def main() -> None:

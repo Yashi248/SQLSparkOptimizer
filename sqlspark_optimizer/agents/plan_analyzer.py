@@ -26,7 +26,7 @@ from pathlib import Path
 
 from pyspark.sql import SparkSession
 
-from observability.tracing import traced
+from sqlspark_optimizer.observability.tracing import traced
 
 # Spark's default autoBroadcastJoinThreshold is 10MB. A table under this is a
 # legitimate broadcast candidate.

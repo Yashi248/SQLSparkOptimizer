@@ -11,7 +11,7 @@ Run:  python phase2d_retrieval.py
 """
 from __future__ import annotations
 
-from knowledge.kb import connect, retrieve
+from sqlspark_optimizer.knowledge.kb import connect, retrieve
 
 # Plain-language symptoms (as the analyzer might describe its findings).
 PROBLEMS = [

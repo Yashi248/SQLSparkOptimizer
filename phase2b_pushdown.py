@@ -26,10 +26,10 @@ from pathlib import Path
 import mlflow
 from pyspark.sql import SparkSession
 
-from agents.optimizer import Optimizer
-from agents.validator import frames_match
-from bench import executed_plan, pushed_filters, time_query
-from observability.tracing import init_mlflow, pipeline_run
+from sqlspark_optimizer.agents.optimizer import Optimizer
+from sqlspark_optimizer.agents.validator import frames_match
+from sqlspark_optimizer.bench import executed_plan, pushed_filters, time_query
+from sqlspark_optimizer.observability.tracing import init_mlflow, pipeline_run
 
 PARQUET_DIR = Path(__file__).resolve().parent / "data" / "tpch"
 

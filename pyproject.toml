@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sqlspark-optimizer"
+version = "0.1.0"
+description = "Multi-agent SQL->PySpark query optimizer with validation, RAG retrieval, cost routing, and observability."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyspark",
+    "duckdb",
+    "sqlglot",
+    "langgraph",
+    "langchain",
+    "mlflow",
+    "sentence-transformers",
+    "pgvector",
+    "psycopg2-binary",
+    "neo4j",
+    "numpy",
+    "pandas",
+]
+
+[project.optional-dependencies]
+llm = ["ollama", "google-generativeai"]
+api = ["fastapi", "uvicorn"]
+dev = ["pytest"]
+
+[project.scripts]
+sqlspark = "sqlspark_optimizer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sqlspark_optimizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

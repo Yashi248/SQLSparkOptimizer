@@ -226,6 +226,78 @@ The thesis: *send each stage to the right-sized model and measure what it costs.
   crashes because a model is unavailable (same best-effort principle as
   observability). Set a key or `ollama pull` to light up the real LLM tier.
 
+## Business impact, corporate use case & roles
+
+**The problem:** cloud data compute (Databricks/Snowflake/EMR) is often a company's
+biggest infra line item. Inefficient queries (missing broadcast, no pushdown, skew,
+bad partitioning) silently waste a large fraction of it, and nobody audits 10,000
+queries by hand.
+
+**Who uses it (roles):**
+- **Data / Platform Engineers** — primary users. Audit the workload, find wasteful
+  jobs, apply *validated* rewrites. They own the pipelines and the bill.
+- **Analytics Engineers (dbt)** — their models *are* SQL; flag/rewrite inefficient
+  models in CI before they ship.
+- **FinOps / Data Platform leads** — consume the aggregate **"$ saved"** report; it's
+  their KPI.
+- **DataOps / SRE** — continuous monitoring; catch a query *regression* before prod.
+
+**Where it plugs in (integration surfaces):**
+1. **Batch audit (offline):** point at query history → ranked report ("these 40
+   queries waste 60% of compute; here are proven-identical rewrites + estimated
+   savings"). One-time or scheduled.
+2. **CI/CD gate (shift-left):** every new query / dbt model / PR is analyzed +
+   validated before merge — a **performance linter** that blocks regressions. Most
+   adoptable entry point.
+3. **Advisory (human-in-the-loop):** suggests validated rewrites; an engineer
+   approves. Auto-applying thousands of rewrites is culturally scary; *advisory with
+   proof* is realistic.
+4. **Continuous:** watch live workloads, flag drift over time.
+
+**Why each architecture piece matters at this scale:**
+- **Validation** makes it *adoptable at all* — "mathematically proven identical
+  output" is what lets a team trust rewrites they didn't hand-check.
+- **Observability/eval** produces the **ROI number** FinOps needs.
+- **RAG + rule registry** = the growing, retrievable catalog of fixes.
+- **Cost routing + LLM escalation** keeps the *tool itself* cheap over a huge
+  workload (deterministic rules for the known 90%, LLM only for the novel 10%).
+- **Multi-agent orchestration** lets the hard cases reason, retry, and escalate.
+
+**Honest positioning:** Databricks (AQE) and Snowflake auto-optimize *some* of this
+at runtime. The differentiator is the **workload-level, validated, explainable,
+cross-engine advisory** view — "here's what's wrong across your *whole* warehouse,
+proven safe, quantified" — which runtime optimizers don't provide. Complementary,
+not a replacement.
+
+**Scaling to 1000+ queries (how to actually test):** (a) parameterize TPC-H
+templates (22 templates × N param sets → thousands of variants); (b) use TPC-DS (99
+richer queries); (c) ingest real query logs (Snowflake QUERY_HISTORY, Databricks
+logs, Spark event logs) — the true corporate input. Architectural key: **analyze
+all cheaply (plan only, no execution), validate/measure only the top-K impactful.**
+Analysis needs no execution, so thousands of queries triage in seconds; expensive
+validation runs only on flagged candidates. This "analyze-all, validate-the-few"
+split is how a real tool scales and is what makes cost routing meaningful.
+
+## Phase 4 — Eval layer (measured results)
+
+The differentiator: claims backed by numbers. `phase4_eval.py` runs a curated eval
+set (queries with *known expected fixes*) and scores the pipeline. Measured on
+TPC-H sf=1 (2026-06-30):
+
+| metric | value | meaning |
+|---|---|---|
+| correctness_rate | **1.00** (6/6) | every emitted result proven output-identical (guardrail) |
+| routing_accuracy | **1.00** (6/6) | pgvector picked the right fix for every query |
+| avg_speedup | **2.22×** | measured runtime improvement on optimized queries |
+| avg_iterations | 1.83 | fast convergence |
+| total_cost | $0 | cheap to run |
+
+Per-case: joins win big (bcast_2tab 4.32×, combined 2.40×, bcast_1tab 2.29×);
+pushdown cases flat (sargable 1.11×, substring 0.98×) — **plan-level win real,
+runtime win needs data clustered by the filter column** (row-group skipping); noop
+case correctly does nothing. Honest headline: *100% correctness, 100% routing, 2.2×
+avg speedup* — with the data to back it.
+
 ## Phases ahead (rationale to fill in as we build)
 
 - **Neo4j (deferred on purpose):** the analyzer already emits a plan graph in

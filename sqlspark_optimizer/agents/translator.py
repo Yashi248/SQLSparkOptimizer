@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 import sqlglot
 
-from observability.tracing import traced
+from sqlspark_optimizer.observability.tracing import traced
 
 
 @dataclass

@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from pyspark.sql import SparkSession
 
-from observability.tracing import traced
+from sqlspark_optimizer.observability.tracing import traced
 
 # TPC-H tables, matching the Parquet files written by data/tpch_setup.py.
 TPCH_TABLES = [

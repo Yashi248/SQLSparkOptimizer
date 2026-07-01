@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agents.rules import DEFAULT_RULES, RuleContext, RuleResult, Rule
-from observability.tracing import traced
+from sqlspark_optimizer.agents.rules import DEFAULT_RULES, RuleContext, RuleResult, Rule
+from sqlspark_optimizer.observability.tracing import traced
 
 
 @dataclass

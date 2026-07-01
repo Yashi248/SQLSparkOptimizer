@@ -19,9 +19,9 @@ from pathlib import Path
 import mlflow
 from pyspark.sql import SparkSession
 
-from agents.translator import Translator
-from agents.validator import Validator
-from observability.tracing import init_mlflow, pipeline_run
+from sqlspark_optimizer.agents.translator import Translator
+from sqlspark_optimizer.agents.validator import Validator
+from sqlspark_optimizer.observability.tracing import init_mlflow, pipeline_run
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PARQUET_DIR = DATA_DIR / "tpch"
