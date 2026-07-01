@@ -77,9 +77,9 @@ Optional services (all Docker, all free): **Neo4j** (plan graph), **pgvector** (
 
 ## Use cases
 
-Runs inside your own Spark against your own tables — nothing is copied out. Pick the case that fits:
+Runs inside your own Spark against your own tables, nothing is copied out. Pick the case that fits:
 
-**1. Optimize one query in a job** — get a validated, faster rewrite before you run it.
+**1. Optimize one query in a job** - get a validated, faster rewrite before you run it.
 
 ```python
 from sqlspark_optimizer import optimize
@@ -91,21 +91,21 @@ if result.optimized:                       # a fix was found AND proven identica
     print(result.applied_rules, f"{result.speedup:.1f}x")
 ```
 
-**2. Audit a whole workload** — point it at your query history (or a folder of `.sql`) and rank by impact.
+**2. Audit a whole workload** - point it at your query history (or a folder of `.sql`) and rank by impact.
 
 ```bash
 sqlspark workload --data /warehouse/tables --queries query_history.json --all
 # → ranked table: which queries can be sped up, the fix, and how much
 ```
 
-**3. CI performance check** — run it on the queries a PR changed; every rewrite is validated, so it never ships a wrong result.
+**3. CI performance check** - run it on the queries a PR changed; every rewrite is validated, so it never ships a wrong result.
 
 ```bash
 sqlspark optimize models/orders.sql --data ./sample_tables --dialect spark
 # exit with the rewrite + speedup; wire into your CI to flag or block
 ```
 
-**4. Inspect a single plan** — see the before/after physical plan and which operator changed.
+**4. Inspect a single plan** - see the before/after physical plan and which operator changed.
 
 ```bash
 python phase2c_graph.py        # writes before/after plans to Neo4j to browse
