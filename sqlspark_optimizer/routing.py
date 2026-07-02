@@ -6,10 +6,15 @@ analyze, optimize) are deterministic and run on the LOCAL tier at $0; the one
 genuine reasoning stage (explain *why* the fixes help) routes to a SMART tier.
 Every call is recorded in a ledger so we can publish cost-per-stage.
 
-The router is graceful: SMART resolves to Gemini (if GEMINI_API_KEY is set), else
-local Ollama (if running), else a deterministic template — so the pipeline runs
-with zero LLM setup and lights up when you add a key. The routing decision is
-logged either way, which is the point.
+The router is graceful: SMART resolves to an OpenAI-compatible endpoint (NVIDIA
+NIM via NVIDIA_API_KEY, or any OpenAI-compatible base URL), else Gemini, else
+local Ollama, else a deterministic template — so the pipeline runs with zero LLM
+setup and lights up when you add a key. The routing decision is logged either way.
+
+Config (env):
+  NVIDIA_API_KEY   -> uses https://integrate.api.nvidia.com/v1 (free tier)
+  OPENAI_API_KEY + OPENAI_BASE_URL -> any OpenAI-compatible endpoint
+  LLM_MODEL        -> model id (default meta/llama-3.3-70b-instruct)
 """
 from __future__ import annotations
 
@@ -52,9 +57,17 @@ def _cost(model: str, pt: int, ct: int) -> float:
 class ModelRouter:
     def __init__(self):
         self.ledger: list[StageCost] = []
+        self._openai_model = os.environ.get("LLM_MODEL", "meta/llama-3.3-70b-instruct")
+        self._openai = self._init_openai()
         self._gemini = self._init_gemini()
         self._ollama_model = os.environ.get("OLLAMA_MODEL", "llama3.2")
         self._ollama_up = self._ollama_reachable()
+
+    @property
+    def llm_available(self) -> bool:
+        """True if any real model (not just the template) can be reached — used to
+        decide whether LLM escalation is worth attempting."""
+        return self._openai is not None or self._gemini is not None or self._ollama_up
 
     # --- public API --------------------------------------------------------- #
     def record_local(self, stage: str, model: str = "deterministic") -> StageCost:
@@ -68,6 +81,15 @@ class ModelRouter:
         Ollama, then a deterministic template. ANY backend failure (no key, model
         not pulled, server hiccup) degrades to the next option — the pipeline must
         never crash because a model is unavailable. Always records the decision."""
+        if self._openai is not None:
+            try:
+                text, pt, ct = self._call_openai(prompt)
+                sc = StageCost(stage, Tier.SMART, self._openai_model, pt, ct,
+                               _cost(self._openai_model, pt, ct))
+                self.ledger.append(sc)
+                return text, sc
+            except Exception:  # noqa: BLE001 - fall through to next tier
+                pass
         if self._gemini is not None:
             try:
                 text, pt, ct = self._call_gemini(prompt)
@@ -97,6 +119,32 @@ class ModelRouter:
                 "stages": len(self.ledger)}
 
     # --- backends ----------------------------------------------------------- #
+    def _init_openai(self):
+        """OpenAI-compatible client. NVIDIA NIM (free) or any OpenAI endpoint."""
+        nvidia = os.environ.get("NVIDIA_API_KEY")
+        key = nvidia or os.environ.get("OPENAI_API_KEY")
+        if not key:
+            return None
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        if nvidia and not base_url:
+            base_url = "https://integrate.api.nvidia.com/v1"
+        try:
+            from openai import OpenAI
+            return OpenAI(api_key=key, base_url=base_url)
+        except Exception:  # noqa: BLE001 - package missing / bad config
+            return None
+
+    def _call_openai(self, prompt: str) -> tuple[str, int, int]:
+        r = self._openai.chat.completions.create(
+            model=self._openai_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1, max_tokens=900,
+        )
+        u = r.usage
+        return (r.choices[0].message.content or "",
+                getattr(u, "prompt_tokens", 0) if u else 0,
+                getattr(u, "completion_tokens", 0) if u else 0)
+
     def _init_gemini(self):
         key = os.environ.get("GEMINI_API_KEY")
         if not key:

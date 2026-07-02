@@ -298,6 +298,31 @@ runtime win needs data clustered by the filter column** (row-group skipping); no
 case correctly does nothing. Honest headline: *100% correctness, 100% routing, 2.2×
 avg speedup* — with the data to back it.
 
+## LLM escalation path (the differentiator)
+
+When **no deterministic rule** matches a query but the plan shows inefficiency (a
+shuffle/exchange), the orchestrator escalates to the **SMART LLM tier**: it asks
+for a *novel* rewrite, then routes that proposal **straight back through the
+Validator**. The rewrite is accepted only if proven **output-identical** (and
+faster); a bad LLM rewrite fails validation and is reverted — safely.
+
+Why this is the payoff of the whole architecture:
+- **Covers the long tail** deterministic rules miss (arithmetic-wrapped predicates,
+  novel structures) — the system improves queries it has no pattern for.
+- **Makes cost routing real:** cheap deterministic rules handle the known ~90% at
+  $0; the LLM fires only on the novel ~10%. *Now* routing has a point.
+- **The Validator is the safety net for an untrusted generator.** An LLM can
+  hallucinate a wrong rewrite; the Validator can't be fooled — "prove identical
+  before accepting" is exactly what it was built for.
+- **The real edge vs AQE/Snowflake:** runtime optimizers can't reason about a
+  novel fix; this can, *and* proves it safe.
+
+Graph-wise: `validate` routes to `escalate` (once, if a signal exists and an LLM is
+available); `escalate` proposes SQL → back to `validate`. Model tier is graceful:
+OpenAI-compatible (**NVIDIA NIM**, free) → Gemini → local Ollama → template. Set
+`NVIDIA_API_KEY` + `LLM_MODEL` to enable; unset = escalation no-ops, pipeline still
+runs.
+
 ## Phases ahead (rationale to fill in as we build)
 
 - **Neo4j (deferred on purpose):** the analyzer already emits a plan graph in

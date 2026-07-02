@@ -20,6 +20,7 @@ symptom->rule map so the pipeline still runs.
 """
 from __future__ import annotations
 
+import re
 from typing import TypedDict
 
 import sqlglot
@@ -50,7 +51,24 @@ _RULE_EXPLAIN = {
                      "push the filter into the Parquet scan.",
     "substring_prefix": "A SUBSTRING prefix test blocked pushdown; rewriting it to "
                         "LIKE 'x%' pushes down as a StringStartsWith filter.",
+    "llm_escalation": "No deterministic rule matched, so an LLM proposed a novel "
+                      "rewrite; it was accepted only after the Validator proved the "
+                      "output is identical.",
 }
+
+
+def _norm(sql: str) -> str:
+    """Normalize SQL for equality checks: lowercase, collapse whitespace."""
+    return re.sub(r"\s+", " ", sql.strip().lower())
+
+
+def _extract_sql(text: str) -> str:
+    """Pull the SQL out of an LLM response — strip ``` fences / prose if present."""
+    if not text:
+        return ""
+    m = re.search(r"```(?:sql)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    body = m.group(1) if m else text
+    return body.strip().rstrip(";").strip()
 
 
 class GState(TypedDict, total=False):
@@ -71,6 +89,8 @@ class GState(TypedDict, total=False):
     log: list[str]
     explanation: str
     cost_summary: dict
+    has_shuffle: bool       # is there an inefficiency signal worth escalating?
+    escalated: bool         # has the LLM escalation path already run?
 
 
 def detect_symptoms(spark_sql: str, analysis: AnalysisResult,
@@ -128,9 +148,12 @@ class OptimizerGraph:
         log = state.get("log", []) + [
             f"iter {state.get('iteration', 0) + 1}: found symptoms "
             f"{[s['fallback'] for s in symptoms] or '(none)'}"]
+        # Signal that there's inefficiency worth escalating to an LLM if the
+        # deterministic rules can't handle it (a shuffle join or exchange).
+        has_shuffle = bool(analysis.shuffle_joins) or ("Exchange" in analysis.plan_text)
         return {"iteration": state.get("iteration", 0) + 1,
                 "broadcast_candidates": analysis.broadcast_candidates,
-                "symptoms": symptoms, "log": log}
+                "symptoms": symptoms, "has_shuffle": has_shuffle, "log": log}
 
     @traced("retrieve")
     def retrieve_node(self, state: GState) -> GState:
@@ -157,8 +180,9 @@ class OptimizerGraph:
     def validate_node(self, state: GState) -> GState:
         log = state.get("log", [])
         if not state.get("made_change"):
-            return {"status": "converged",
-                    "log": log + ["no applicable fix left; converged"]}
+            # No fix applied this pass. `decide` may still route to LLM escalation.
+            return {"status": "no_change",
+                    "log": log + ["no deterministic fix applied"]}
         base_df, base_t = self._baseline(state["spark_sql"])
         cand_df = self.spark.sql(state["candidate_sql"]).toPandas()
         passed, reason = frames_match(base_df, cand_df)
@@ -200,14 +224,44 @@ class OptimizerGraph:
         text, _ = self.router.reason("explain", prompt, fallback)
         return {"explanation": text, "cost_summary": self.router.summary()}
 
+    def escalate_node(self, state: GState) -> GState:
+        """No deterministic rule fit — ask the SMART LLM for a NOVEL rewrite. The
+        proposal is untrusted, so it goes straight back through the Validator: it
+        is accepted ONLY if proven output-identical (and faster). This is where the
+        LLM's reach and the Validator's safety net combine."""
+        sql = state["current_sql"]
+        prompt = (
+            "You are a Spark SQL optimization expert. Rewrite the query below to run "
+            "faster WITHOUT changing its results (identical rows and values). Prefer "
+            "sargable/pushdown-friendly predicates, broadcast hints for small tables, "
+            "and removing redundant work. Output ONLY the rewritten SQL, no prose.\n\n"
+            f"{sql}"
+        )
+        text, _ = self.router.reason("escalate", prompt, "")
+        candidate = _extract_sql(text)
+        log = state.get("log", [])
+        if not candidate or _norm(candidate) == _norm(sql):
+            return {"escalated": True, "made_change": False,
+                    "log": log + ["escalation: LLM proposed no usable change"]}
+        return {"escalated": True, "made_change": True, "candidate_sql": candidate,
+                "selected_rules": ["llm_escalation"],
+                "log": log + ["escalation: validating LLM-proposed rewrite"]}
+
     def decide(self, state: GState) -> str:
-        if state.get("status") in ("reverted", "converged"):
-            return "done"
-        if not state.get("validation_passed"):
-            return "done"
-        if state.get("iteration", 0) >= MAX_ITERS:
-            return "done"
-        return "loop"
+        status = state.get("status")
+        if status == "reverted":
+            return "explain"        # a fix (incl. a bad LLM one) failed validation
+        if status == "optimized" and state.get("validation_passed"):
+            if state.get("escalated"):
+                return "explain"    # don't loop after an escalated fix
+            if state.get("iteration", 0) < MAX_ITERS:
+                return "loop"        # look for more deterministic patterns
+            return "explain"
+        # status == "no_change": deterministic rules found nothing this pass.
+        if (not state.get("escalated") and state.get("has_shuffle")
+                and self.router.llm_available):
+            return "escalate"        # try a novel LLM rewrite
+        return "explain"
 
     # helpers
     def _baseline(self, original_sql: str):
@@ -246,14 +300,17 @@ class OptimizerGraph:
         b.add_node("retrieve", self.retrieve_node)
         b.add_node("optimize", self.optimize_node)
         b.add_node("validate", self.validate_node)
+        b.add_node("escalate", self.escalate_node)
         b.add_node("explain", self.explain_node)
         b.add_edge(START, "translate")
         b.add_edge("translate", "analyze")
         b.add_edge("analyze", "retrieve")
         b.add_edge("retrieve", "optimize")
         b.add_edge("optimize", "validate")
-        # On "done" we route to the reasoning stage (smart tier) before ending.
+        # validate -> loop (more patterns) | escalate (LLM novel fix) | explain (end)
         b.add_conditional_edges("validate", self.decide,
-                                {"loop": "analyze", "done": "explain"})
+                                {"loop": "analyze", "escalate": "escalate",
+                                 "explain": "explain"})
+        b.add_edge("escalate", "validate")   # LLM proposal goes through the Validator
         b.add_edge("explain", END)
         return b.compile()

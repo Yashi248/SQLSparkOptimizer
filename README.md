@@ -32,8 +32,12 @@ Cloud data compute is often a company's biggest infra bill, and inefficient quer
 graph TD;
   translate --> analyze --> retrieve --> optimize --> validate;
   validate -. loop .-> analyze;
+  validate -. no rule fits .-> escalate;
+  escalate -- LLM rewrite --> validate;
   validate -. done .-> explain;
 ```
+
+If a deterministic rule fits, it's applied and proven. If none fits, the system **escalates to an LLM** for a novel rewrite — accepted only if the Validator proves it output-identical.
 
 > Phase-by-phase walkthrough and the reasoning behind every decision live in [`docs/design-rationale.md`](docs/design-rationale.md).
 
