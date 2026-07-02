@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SQLSpark Optimizer</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root{--bg:#0f1117;--panel:#1a1d27;--border:#2a2e3a;--text:#e6e8ee;--muted:#9aa0ad;
+        --accent:#6c8cff;--green:#3fb950;--red:#f0883e;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5}
+  header{padding:20px 28px;border-bottom:1px solid var(--border)}
+  header h1{margin:0;font-size:20px}
+  header p{margin:4px 0 0;color:var(--muted);font-size:13px}
+  main{max-width:1200px;margin:0 auto;padding:24px 28px;display:grid;gap:20px}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px}
+  textarea{width:100%;min-height:120px;background:#0c0e14;color:var(--text);
+           border:1px solid var(--border);border-radius:8px;padding:12px;
+           font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;resize:vertical}
+  .row{display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap}
+  select,button{background:#0c0e14;color:var(--text);border:1px solid var(--border);
+                border-radius:8px;padding:9px 14px;font-size:14px;cursor:pointer}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button:disabled{opacity:.5;cursor:default}
+  .examples button{font-size:12px;padding:5px 10px}
+  .muted{color:var(--muted);font-size:13px}
+  .metrics{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:8px}
+  .metric b{font-size:22px;display:block}
+  .chip{display:inline-block;background:#20242f;border:1px solid var(--border);
+        border-radius:999px;padding:3px 11px;font-size:12px;margin:2px 4px 2px 0}
+  .ok{color:var(--green)} .warn{color:var(--red)}
+  pre{background:#0c0e14;border:1px solid var(--border);border-radius:8px;padding:12px;
+      overflow:auto;font-size:12.5px;margin:0}
+  .plans{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .plan h3{margin:0 0 8px;font-size:14px}
+  .graph{height:340px;background:#0c0e14;border:1px solid var(--border);border-radius:8px}
+  @media(max-width:800px){.plans{grid-template-columns:1fr}}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>SQLSpark Optimizer</h1>
+  <p>Paste SQL → see the detected fix, the before/after physical plan, proven-identical output, and the speedup.</p>
+</header>
+<main>
+  <div class="panel">
+    <textarea id="sql" spellcheck="false"></textarea>
+    <div class="row">
+      <button class="primary" id="run">Optimize</button>
+      <label class="muted">dialect
+        <select id="dialect">
+          <option value="spark">spark</option>
+          <option value="duckdb">duckdb</option>
+          <option value="postgres">postgres</option>
+        </select>
+      </label>
+      <span class="examples muted">examples:
+        <button data-ex="join">broadcast join</button>
+        <button data-ex="year">pushdown</button>
+      </span>
+      <span id="status" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="results">
+    <div class="metrics">
+      <div class="metric">speedup<b id="m-speedup">–</b></div>
+      <div class="metric">validation<b id="m-valid">–</b></div>
+      <div class="metric">status<b id="m-status">–</b></div>
+    </div>
+    <div id="rules"></div>
+    <p class="muted" id="explanation" style="margin-top:12px"></p>
+    <details style="margin-top:10px"><summary class="muted">optimized SQL</summary>
+      <pre id="opt-sql"></pre></details>
+  </div>
+
+  <div class="panel hidden" id="plans-panel">
+    <div class="plans">
+      <div class="plan"><h3>Before</h3><div class="graph" id="g-before"></div></div>
+      <div class="plan"><h3>After</h3><div class="graph" id="g-after"></div></div>
+    </div>
+    <p class="muted" style="margin:10px 0 0">
+      Orange = shuffle join (SortMergeJoin) · Green = BroadcastHashJoin. Watch the join operator change.</p>
+  </div>
+</main>
+
+<script>
+const EX = {
+  join: `SELECT n_name, SUM(l_extendedprice * (1 - l_discount)) AS revenue
+FROM lineitem
+JOIN supplier ON l_suppkey = s_suppkey
+JOIN nation ON s_nationkey = n_nationkey
+GROUP BY n_name
+ORDER BY revenue DESC`,
+  year: `SELECT SUM(l_extendedprice) AS revenue
+FROM lineitem
+WHERE YEAR(l_shipdate) = 1994`
+};
+document.querySelectorAll('.examples button').forEach(b =>
+  b.onclick = () => { sql.value = EX[b.dataset.ex]; });
+sql.value = EX.join;
+
+function color(label){
+  if(/Broadcast.*Join/.test(label)) return {background:'#153d1e',border:'#3fb950'};
+  if(/(SortMerge|ShuffledHash)Join/.test(label)) return {background:'#3d2a15',border:'#f0883e'};
+  return {background:'#20242f',border:'#3a3f4d'};
+}
+function render(elId, plan){
+  const nodes = plan.nodes.map(n => ({id:n.id,label:n.label,shape:'box',
+    color:color(n.label),font:{color:'#e6e8ee',size:13}}));
+  const edges = plan.edges.map(e => ({from:e.from,to:e.to,arrows:'to',color:'#4a4f5d'}));
+  new vis.Network(document.getElementById(elId),
+    {nodes:new vis.DataSet(nodes),edges:new vis.DataSet(edges)},
+    {layout:{hierarchical:{direction:'DU',sortMethod:'directed',levelSeparation:70,
+     nodeSpacing:130}},physics:false,interaction:{dragNodes:true}});
+}
+
+const run = document.getElementById('run');
+run.onclick = async () => {
+  run.disabled = true; status.textContent = 'running the pipeline…';
+  results.classList.add('hidden'); document.getElementById('plans-panel').classList.add('hidden');
+  try{
+    const res = await fetch('/api/optimize',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({sql:sql.value,dialect:dialect.value})});
+    const d = await res.json();
+    if(!d.ok){ status.innerHTML = '<span class="warn">error: '+d.error+'</span>'; return; }
+    status.textContent = '';
+    document.getElementById('m-speedup').textContent = d.speedup + '×';
+    const valid = d.status !== 'reverted';
+    const mv = document.getElementById('m-valid');
+    mv.textContent = valid ? '✓ identical' : '✗ reverted'; mv.className = valid?'ok':'warn';
+    document.getElementById('m-status').textContent = d.status;
+    document.getElementById('rules').innerHTML = (d.applied_rules.length
+      ? d.applied_rules.map(r=>'<span class="chip">'+r+'</span>').join('')
+      : '<span class="muted">no optimization found</span>');
+    document.getElementById('explanation').textContent = d.explanation || '';
+    document.getElementById('opt-sql').textContent = d.optimized_sql;
+    results.classList.remove('hidden');
+    document.getElementById('plans-panel').classList.remove('hidden');
+    render('g-before', d.plan_before); render('g-after', d.plan_after);
+  }catch(err){ status.innerHTML = '<span class="warn">'+err+'</span>'; }
+  finally{ run.disabled = false; }
+};
+</script>
+</body>
+</html>

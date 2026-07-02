@@ -13,9 +13,10 @@ from pyspark.sql import SparkSession
 from sqlspark_optimizer.api import optimize
 
 
-def run_one(spark: SparkSession, qid: str, sql: str, parquet_dir: str | Path) -> dict:
+def run_one(spark: SparkSession, qid: str, sql: str, parquet_dir: str | Path,
+            source_dialect: str = "spark") -> dict:
     try:
-        r = optimize(sql, spark, parquet_dir, source_dialect="duckdb",
+        r = optimize(sql, spark, parquet_dir, source_dialect=source_dialect,
                      timing_runs=1, use_llm_explain=False)
         return {"qid": qid, "optimized": r.optimized, "rules": r.applied_rules,
                 "speedup": r.speedup if r.optimized else 1.0, "status": r.status,
@@ -26,9 +27,11 @@ def run_one(spark: SparkSession, qid: str, sql: str, parquet_dir: str | Path) ->
 
 
 def run_workload(spark: SparkSession, queries: dict[str, str],
-                 parquet_dir: str | Path) -> tuple[list[dict], dict]:
+                 parquet_dir: str | Path,
+                 source_dialect: str = "spark") -> tuple[list[dict], dict]:
     """Optimize every query; return (per-query results, aggregate summary)."""
-    results = [run_one(spark, qid, sql, parquet_dir) for qid, sql in queries.items()]
+    results = [run_one(spark, qid, sql, parquet_dir, source_dialect)
+               for qid, sql in queries.items()]
     results.sort(key=lambda r: r["speedup"], reverse=True)
 
     optimized = [r for r in results if r["optimized"]]

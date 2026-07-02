@@ -2,7 +2,14 @@
 
 **A multi-agent system that optimizes SQL→PySpark queries and _proves the output is still correct_ with an evaluation layer that measures routing, cost, and speedup at every stage.**
 
-Most query-optimizer demos _transform_ a query. This one proves each transformation is output-identical and measures what it costs(the part those demos skip).
+Most query-optimizer demos _transform_ a query. This one proves each transformation is output-identical and measures what it costs — the part those demos skip.
+
+### ▶ [Live interactive demo](https://yashi248.github.io/SQLSparkOptimizer/)
+
+Explore the before/after physical plans yourself (drag the nodes) — read-only, no setup. Preview:
+
+![SQLSpark Optimizer — result panel](docs/assets/web-ui-1.png)
+![SQLSpark Optimizer — before/after physical plans](docs/assets/web-ui-2.png)
 
 ---
 
@@ -77,6 +84,12 @@ sqlspark optimize query.sql --data data/tpch --dialect duckdb
 sqlspark workload --data data/tpch --queries data/tpch_queries.json --all
 ```
 
+Or launch the interactive web UI (paste SQL → see the before/after plan, speedup, and validation):
+
+```bash
+python webserver.py        # then open http://localhost:8000
+```
+
 Optional services (all Docker, all free): **Neo4j** (plan graph), **pgvector** (RAG), **MLflow UI** (traces), **Ollama/Gemini** (the reasoning tier). Every one is best-effort - the pipeline runs without them.
 
 ## Use cases
@@ -95,10 +108,11 @@ if result.optimized:                       # a fix was found AND proven identica
     print(result.applied_rules, f"{result.speedup:.1f}x")
 ```
 
-**2. Audit a whole workload** - point it at your query history (or a folder of `.sql`) and rank by impact.
+**2. Audit a whole workload** - point it at a folder of `.sql`, a `.json`, or a query-log `.csv` (Snowflake / Databricks export — the SQL column is auto-detected) and rank by impact.
 
 ```bash
-sqlspark workload --data /warehouse/tables --queries query_history.json --all
+sqlspark workload --data /warehouse/tables --queries ./my_queries/ --all
+# --queries accepts a directory of .sql, or a .sql / .json / .csv file
 # → ranked table: which queries can be sped up, the fix, and how much
 ```
 
@@ -121,4 +135,6 @@ PySpark · DuckDB · SQLGlot · LangGraph · MLflow · pgvector · Neo4j · sent
 
 ## Status
 
-Phases 0-4 complete. Next: LLM escalation path for novel anti-patterns, whole-workload scale testing, and a web UI + plan visualizer. See [`docs/design-rationale.md`](docs/design-rationale.md) for the _why_ behind each decision and [`docs/learning-notes.md`](docs/learning-notes.md) for the concepts.
+Core pipeline (Phases 0–4), **LLM escalation** for novel anti-patterns, **real-query ingestion** (dir / `.sql` / `.json` / `.csv`), and the **web UI + plan visualizer** are complete — 31 tests passing. Next: whole-workload scale testing (1,000+ queries) and a Databricks validation run.
+
+See [`docs/design-rationale.md`](docs/design-rationale.md) for the _why_ behind every decision and [`docs/learning-notes.md`](docs/learning-notes.md) for the concepts.

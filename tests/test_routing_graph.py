@@ -70,6 +70,47 @@ def test_decide_reverted_goes_to_explain():
     assert og.decide({"status": "reverted"}) == "explain"
 
 
+def test_bad_candidate_reverts_not_crashes():
+    # A candidate that fails to run (e.g. malformed LLM SQL) must revert safely,
+    # never raise out of validate_node.
+    class _BadSpark:
+        def sql(self, q):
+            raise ValueError("[PARSE_SYNTAX_ERROR] Syntax error near 'SELECT'")
+    og = OptimizerGraph(spark=_BadSpark(), parquet_dir=".")
+    og._base = (__import__("pandas").DataFrame({"x": [1]}), 0.1)  # skip baseline run
+    out = og.validate_node({"made_change": True, "candidate_sql": "GARBAGE SQL",
+                            "spark_sql": "SELECT 1", "selected_rules": ["llm_escalation"],
+                            "iteration": 2, "log": []})
+    assert out["status"] == "reverted" and out["validation_passed"] is False
+
+
+def test_escalation_rejected_if_not_faster(monkeypatch):
+    # An LLM rewrite that is output-identical but NOT faster must be rejected,
+    # keeping the prior (faster) optimization instead of replacing it.
+    import pandas as pd
+    import sqlspark_optimizer.orchestrator.graph as g
+
+    class _DF:
+        def toPandas(self):
+            return pd.DataFrame({"x": [1]})
+
+    class _Spark:
+        def sql(self, q):
+            return _DF()
+
+    og = OptimizerGraph(spark=_Spark(), parquet_dir=".")
+    og._base = (pd.DataFrame({"x": [1]}), 3.0)                 # baseline time
+    monkeypatch.setattr(g, "frames_match", lambda a, b: (True, "ok"))
+    monkeypatch.setattr(g, "time_query", lambda s, q, runs=1: 3.0)  # candidate == baseline -> ~1x
+    out = og.validate_node({"made_change": True, "candidate_sql": "SELECT 1",
+                            "spark_sql": "SELECT 1", "selected_rules": ["llm_escalation"],
+                            "iteration": 2, "applied_rules": ["broadcast_join"],
+                            "speedup": 3.0, "log": []})
+    assert out["status"] == "optimized" and out["validation_passed"] is True  # prior kept
+    assert "llm_escalation" in out["tried_rules"]
+    assert "current_sql" not in out          # did NOT replace with the slower rewrite
+
+
 def test_escalate_node_proposes_candidate(monkeypatch):
     og = OptimizerGraph(spark=None, parquet_dir=".")
     monkeypatch.setattr(og.router, "reason",

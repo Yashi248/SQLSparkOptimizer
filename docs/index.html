@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SQLSpark Optimizer — interactive demo</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<script src="demo_data.js"></script>
+<style>
+  :root{--bg:#0f1117;--panel:#1a1d27;--border:#2a2e3a;--text:#e6e8ee;--muted:#9aa0ad;
+        --accent:#6c8cff;--green:#3fb950;--red:#f0883e;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5}
+  header{padding:22px 28px;border-bottom:1px solid var(--border)}
+  header h1{margin:0;font-size:20px}
+  header p{margin:4px 0 0;color:var(--muted);font-size:13px}
+  header a{color:var(--accent);text-decoration:none}
+  .badge{display:inline-block;background:#20242f;border:1px solid var(--border);
+         border-radius:999px;padding:2px 10px;font-size:11px;color:var(--muted);margin-left:8px}
+  main{max-width:1150px;margin:0 auto;padding:22px 28px;display:grid;gap:18px}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap}
+  .tabs button{background:#0c0e14;color:var(--text);border:1px solid var(--border);
+               border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer}
+  .tabs button.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  pre{background:#0c0e14;border:1px solid var(--border);border-radius:8px;padding:12px;
+      overflow:auto;font-size:12.5px;margin:8px 0 0;
+      font-family:ui-monospace,Menlo,Consolas,monospace}
+  .muted{color:var(--muted);font-size:13px}
+  .metrics{display:flex;gap:26px;flex-wrap:wrap;margin-bottom:8px}
+  .metric b{font-size:22px;display:block}
+  .chip{display:inline-block;background:#20242f;border:1px solid var(--border);
+        border-radius:999px;padding:3px 11px;font-size:12px;margin:2px 4px 2px 0}
+  .ok{color:var(--green)} .warn{color:var(--red)}
+  .plans{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .plan h3{margin:0 0 8px;font-size:14px}
+  .graph{height:340px;background:#0c0e14;border:1px solid var(--border);border-radius:8px}
+  @media(max-width:800px){.plans{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>SQLSpark Optimizer <span class="badge">read-only demo · precomputed</span></h1>
+  <p>Pick a query, then explore its before/after physical plan (drag the nodes).
+     &nbsp;·&nbsp; <a href="https://github.com/Yashi248/SQLSparkOptimizer">source on GitHub</a></p>
+</header>
+<main>
+  <div class="panel">
+    <div class="tabs" id="tabs"></div>
+    <pre id="query"></pre>
+  </div>
+
+  <div class="panel">
+    <div class="metrics">
+      <div class="metric">speedup<b id="m-speedup">–</b></div>
+      <div class="metric">validation<b id="m-valid">–</b></div>
+      <div class="metric">status<b id="m-status">–</b></div>
+    </div>
+    <div id="rules"></div>
+    <p class="muted" id="explanation" style="margin-top:12px"></p>
+    <details style="margin-top:8px"><summary class="muted">optimized SQL</summary>
+      <pre id="opt-sql"></pre></details>
+  </div>
+
+  <div class="panel">
+    <div class="plans">
+      <div class="plan"><h3>Before</h3><div class="graph" id="g-before"></div></div>
+      <div class="plan"><h3>After</h3><div class="graph" id="g-after"></div></div>
+    </div>
+    <p class="muted" style="margin:10px 0 0">
+      Orange = shuffle join (SortMergeJoin) · Green = BroadcastHashJoin.</p>
+  </div>
+</main>
+
+<script>
+const DEMO = window.DEMO || [];
+function color(label){
+  if(/Broadcast.*Join/.test(label)) return {background:'#153d1e',border:'#3fb950'};
+  if(/(SortMerge|ShuffledHash)Join/.test(label)) return {background:'#3d2a15',border:'#f0883e'};
+  return {background:'#20242f',border:'#3a3f4d'};
+}
+function render(elId, plan){
+  const nodes = plan.nodes.map(n => ({id:n.id,label:n.label,shape:'box',
+    color:color(n.label),font:{color:'#e6e8ee',size:13}}));
+  const edges = plan.edges.map(e => ({from:e.from,to:e.to,arrows:'to',color:'#4a4f5d'}));
+  new vis.Network(document.getElementById(elId),
+    {nodes:new vis.DataSet(nodes),edges:new vis.DataSet(edges)},
+    {layout:{hierarchical:{direction:'DU',sortMethod:'directed',levelSeparation:70,
+     nodeSpacing:130}},physics:false,interaction:{dragNodes:true}});
+}
+function show(d){
+  document.getElementById('query').textContent = d.query;
+  document.getElementById('m-speedup').textContent = d.speedup + '×';
+  const valid = d.status !== 'reverted';
+  const mv = document.getElementById('m-valid');
+  mv.textContent = valid ? '✓ identical' : '✗ reverted'; mv.className = valid?'ok':'warn';
+  document.getElementById('m-status').textContent = d.status;
+  document.getElementById('rules').innerHTML = (d.applied_rules.length
+    ? d.applied_rules.map(r=>'<span class="chip">'+r+'</span>').join('')
+    : '<span class="muted">no optimization found</span>');
+  document.getElementById('explanation').textContent = d.explanation || '';
+  document.getElementById('opt-sql').textContent = d.optimized_sql;
+  render('g-before', d.plan_before); render('g-after', d.plan_after);
+}
+const tabs = document.getElementById('tabs');
+if(!DEMO.length){ tabs.innerHTML = '<span class="muted">demo_data.js not found — run '+
+  '<code>python scripts/gen_demo_data.py</code></span>'; }
+DEMO.forEach((d,i) => {
+  const b = document.createElement('button');
+  b.textContent = d.name; b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); show(d);
+  };
+  if(i===0) b.classList.add('active');
+  tabs.appendChild(b);
+});
+if(DEMO.length) show(DEMO[0]);
+</script>
+</body>
+</html>

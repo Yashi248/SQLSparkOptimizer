@@ -79,6 +79,7 @@ class GState(TypedDict, total=False):
     broadcast_candidates: list[str]
     symptoms: list[dict]    # [{text, fallback}]
     selected_rules: list[str]
+    tried_rules: list[str]  # selected but rejected (don't re-pick)
     retrieved: list[dict]   # [{symptom, rule}]
     candidate_sql: str
     made_change: bool
@@ -161,11 +162,13 @@ class OptimizerGraph:
         Traced -> shows up in MLflow as part of the pipeline."""
         selected: list[str] = []
         retrieved: list[dict] = []
-        applied = set(state.get("applied_rules", []))
+        # Skip rules already applied AND rules tried-but-rejected (so a rejected
+        # rule isn't re-picked, which would loop).
+        excluded = set(state.get("applied_rules", [])) | set(state.get("tried_rules", []))
         for s in state.get("symptoms", []):
             rule = self._retrieve_rule(s["text"], s["fallback"])
             retrieved.append({"symptom": s["text"], "rule": rule})
-            if rule and rule not in selected and rule not in applied:
+            if rule and rule not in selected and rule not in excluded:
                 selected.append(rule)
         return {"selected_rules": selected, "retrieved": retrieved}
 
@@ -179,24 +182,50 @@ class OptimizerGraph:
 
     def validate_node(self, state: GState) -> GState:
         log = state.get("log", [])
+        rules = state.get("selected_rules", [])
+        it = state.get("iteration", 0)
         if not state.get("made_change"):
             # No fix applied this pass. `decide` may still route to LLM escalation.
             return {"status": "no_change",
                     "log": log + ["no deterministic fix applied"]}
+
         base_df, base_t = self._baseline(state["spark_sql"])
-        cand_df = self.spark.sql(state["candidate_sql"]).toPandas()
-        passed, reason = frames_match(base_df, cand_df)
-        if not passed:
-            return {"validation_passed": False, "status": "reverted",
-                    "log": log + [f"iter {state['iteration']}: "
-                                  f"{state['selected_rules']} FAILED ({reason}) -> reverted"]}
-        cand_t = time_query(self.spark, state["candidate_sql"], runs=self.timing_runs)
-        speedup = base_t / cand_t if cand_t else float("nan")
-        return {"current_sql": state["candidate_sql"], "validation_passed": True,
-                "speedup": speedup, "status": "optimized",
-                "applied_rules": state.get("applied_rules", []) + state["selected_rules"],
-                "log": log + [f"iter {state['iteration']}: applied "
-                              f"{state['selected_rules']} -> PASS, {speedup:.2f}x"]}
+        # The candidate may be an untrusted LLM rewrite that doesn't even parse.
+        # A candidate that fails to RUN is a failed validation, not a crash.
+        try:
+            cand_df = self.spark.sql(state["candidate_sql"]).toPandas()
+            passed, reason = frames_match(base_df, cand_df)
+        except Exception as exc:  # noqa: BLE001 - bad candidate -> reject, don't crash
+            passed, reason = False, f"candidate failed to execute: {str(exc)[:60]}"
+
+        speedup = state.get("speedup", 1.0)
+        if passed:
+            cand_t = time_query(self.spark, state["candidate_sql"], runs=self.timing_runs)
+            speedup = base_t / cand_t if cand_t else float("nan")
+            # An untrusted LLM rewrite is only worth accepting if it's actually
+            # FASTER than what we already have — an output-identical-but-not-faster
+            # rewrite must not replace a good deterministic fix (e.g. drop a
+            # broadcast hint). Deterministic rules are trusted patterns; accept them
+            # on correctness even when runtime is flat.
+            prev_best = state.get("speedup", 1.0)
+            if rules == ["llm_escalation"] and speedup + 0.05 < prev_best:
+                passed = False
+                reason = (f"LLM rewrite valid but not faster "
+                          f"({speedup:.2f}x < best {prev_best:.2f}x)")
+
+        if passed:
+            return {"current_sql": state["candidate_sql"], "validation_passed": True,
+                    "speedup": speedup, "status": "optimized",
+                    "applied_rules": state.get("applied_rules", []) + rules,
+                    "log": log + [f"iter {it}: applied {rules} -> PASS, {speedup:.2f}x"]}
+
+        # Reject the candidate WITHOUT clobbering a prior successful optimization:
+        # keep the last-good current_sql/speedup and remember not to re-pick `rules`.
+        had_prior = bool(state.get("applied_rules"))
+        return {"validation_passed": had_prior,
+                "status": "optimized" if had_prior else "reverted",
+                "tried_rules": state.get("tried_rules", []) + rules,
+                "log": log + [f"iter {it}: {rules} rejected ({reason}) -> kept previous"]}
 
     def explain_node(self, state: GState) -> GState:
         """Reasoning stage -> routed to the SMART model tier. Explains what was

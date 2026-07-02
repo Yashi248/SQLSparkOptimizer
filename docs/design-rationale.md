@@ -317,6 +317,17 @@ Why this is the payoff of the whole architecture:
 - **The real edge vs AQE/Snowflake:** runtime optimizers can't reason about a
   novel fix; this can, *and* proves it safe.
 
+**Acceptance gate — correctness is necessary, not sufficient.** An LLM rewrite is
+accepted only if it is BOTH output-identical AND actually faster than what we
+already have. Found in testing: a 70B model rewrote a broadcast-optimized query
+into an equivalent form that *dropped the broadcast hint* — output-identical but
+back to a slow SortMergeJoin. Validating on correctness alone accepted it, undoing
+the optimization. Fix: `validate_node` rejects an escalation whose measured speedup
+is below the best already achieved, keeps the prior (faster) SQL, and records the
+rule as "tried" so it isn't re-picked. Deterministic rules are trusted patterns
+(accepted on correctness even when runtime is flat); the untrusted LLM must prove
+it helps.
+
 Graph-wise: `validate` routes to `escalate` (once, if a signal exists and an LLM is
 available); `escalate` proposes SQL → back to `validate`. Model tier is graceful:
 OpenAI-compatible (**NVIDIA NIM**, free) → Gemini → local Ollama → template. Set
