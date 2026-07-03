@@ -48,6 +48,13 @@ def _graph_json(g: PlanGraph) -> dict:
             "edges": [{"from": p, "to": c} for p, c in g.edges]}
 
 
+def _result_preview(spark, sql: str, n: int = 10) -> dict:
+    """First N rows of the query result — stringified so it's JSON-safe (dates,
+    decimals). Makes the 'output identical' claim tangible in the UI."""
+    pdf = spark.sql(sql).limit(n).toPandas().astype(str)
+    return {"columns": [str(c) for c in pdf.columns], "rows": pdf.values.tolist()}
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(FRONTEND)
@@ -71,6 +78,7 @@ def api_optimize(req: OptimizeRequest) -> dict:
             "speedup": round(result.speedup, 2),
             "status": result.status,
             "explanation": result.explanation,
+            "result_preview": _result_preview(spark, result.optimized_sql),
             "plan_before": plan_before,
             "plan_after": plan_after,
         }

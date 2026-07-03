@@ -334,6 +334,21 @@ OpenAI-compatible (**NVIDIA NIM**, free) → Gemini → local Ollama → templat
 `NVIDIA_API_KEY` + `LLM_MODEL` to enable; unset = escalation no-ops, pipeline still
 runs.
 
+## Scale test — analyze all, validate the few (measured)
+
+A real workload is thousands of queries, not one. `stress_test.py` generates a
+synthetic workload (parameterized TPC-H templates) and runs the two-tier scaling
+approach: **analyze every query plan-only (no execution)**, rank by predicted
+opportunity, then **validate + measure only the top-K**.
+
+Measured: **~155 ms/query** for the analyze-only triage → **~1,000 queries in ~2.6
+min**, opportunities found in **~68%** (broadcast / sargable / substring), the rest
+correctly flagged as no-op. Brute-forcing all 1,000 in full mode would be *hours*;
+triage-then-validate is minutes. This is exactly how you'd audit a warehouse
+without executing every production query — and it's what makes the cost story real
+(cheap deterministic triage over everything, expensive validation only where it
+pays off).
+
 ## Phases ahead (rationale to fill in as we build)
 
 - **Neo4j (deferred on purpose):** the analyzer already emits a plan graph in

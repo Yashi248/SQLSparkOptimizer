@@ -41,6 +41,11 @@ def _graph_json(g) -> dict:
             "edges": [{"from": p, "to": c} for p, c in g.edges]}
 
 
+def _result_preview(spark, sql: str, n: int = 10) -> dict:
+    pdf = spark.sql(sql).limit(n).toPandas().astype(str)
+    return {"columns": [str(c) for c in pdf.columns], "rows": pdf.values.tolist()}
+
+
 def main() -> None:
     spark = make_local_spark(app_name="gen-demo")
     register_parquet_dir(spark, PARQUET_DIR)
@@ -49,12 +54,13 @@ def main() -> None:
         spark_sql = Translator(source_dialect="spark").translate(q).spark_sql
         before = _graph_json(parse_plan_tree(executed_plan(spark, spark_sql)))
         r = optimize(q, spark, PARQUET_DIR, source_dialect="spark",
-                     timing_runs=1, use_llm_explain=False)
+                     timing_runs=3, use_llm_explain=False)  # stable demo numbers
         after = _graph_json(parse_plan_tree(executed_plan(spark, r.optimized_sql)))
         demo.append({
             "name": name, "query": q, "optimized_sql": r.optimized_sql,
             "applied_rules": r.applied_rules, "speedup": round(r.speedup, 2),
             "status": r.status, "explanation": r.explanation,
+            "result_preview": _result_preview(spark, r.optimized_sql),
             "plan_before": before, "plan_after": after,
         })
         print(f"  captured '{name}': {r.applied_rules} @ {r.speedup:.2f}x")

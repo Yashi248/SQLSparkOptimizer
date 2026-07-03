@@ -73,6 +73,9 @@
     </div>
     <div id="rules"></div>
     <p class="muted" id="explanation" style="margin-top:12px"></p>
+    <details style="margin-top:10px" open>
+      <summary class="muted">output — validated identical to the original</summary>
+      <div id="result-table" style="overflow:auto;margin-top:6px"></div></details>
     <details style="margin-top:10px"><summary class="muted">optimized SQL</summary>
       <pre id="opt-sql"></pre></details>
   </div>
@@ -117,6 +120,17 @@ function render(elId, plan){
     {layout:{hierarchical:{direction:'DU',sortMethod:'directed',levelSeparation:70,
      nodeSpacing:130}},physics:false,interaction:{dragNodes:true}});
 }
+function renderTable(elId, p){
+  const el = document.getElementById(elId);
+  if(!p || !p.columns){ el.innerHTML=''; return; }
+  const th = 'text-align:left;padding:4px 12px;border-bottom:1px solid #2a2e3a;color:#9aa0ad';
+  const td = 'padding:4px 12px;border-bottom:1px solid #20242f;white-space:nowrap';
+  let h='<table style="border-collapse:collapse;font-size:12.5px"><thead><tr>';
+  p.columns.forEach(c=> h+='<th style="'+th+'">'+c+'</th>');
+  h+='</tr></thead><tbody>';
+  p.rows.forEach(r=>{ h+='<tr>'; r.forEach(v=> h+='<td style="'+td+'">'+v+'</td>'); h+='</tr>'; });
+  el.innerHTML = h+'</tbody></table>';
+}
 
 const run = document.getElementById('run');
 run.onclick = async () => {
@@ -138,6 +152,7 @@ run.onclick = async () => {
       ? d.applied_rules.map(r=>'<span class="chip">'+r+'</span>').join('')
       : '<span class="muted">no optimization found</span>');
     document.getElementById('explanation').textContent = d.explanation || '';
+    renderTable('result-table', d.result_preview);
     document.getElementById('opt-sql').textContent = d.optimized_sql;
     results.classList.remove('hidden');
     document.getElementById('plans-panel').classList.remove('hidden');
