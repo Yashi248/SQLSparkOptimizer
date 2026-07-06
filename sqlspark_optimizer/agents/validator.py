@@ -16,12 +16,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import duckdb
 import numpy as np
 import pandas as pd
 from pyspark.sql import SparkSession
 
 from sqlspark_optimizer.observability.tracing import traced
+
+# NOTE: `duckdb` is imported lazily inside the Validator class — it's only the
+# Phase-1 correctness oracle (DuckDB-vs-Spark). The orchestrator validates
+# Spark-vs-Spark via frames_match (pandas), so the package loads without DuckDB
+# (e.g. on Databricks with a --no-deps install).
 
 # TPC-H tables, matching the Parquet files written by data/tpch_setup.py.
 TPCH_TABLES = [
@@ -72,6 +76,7 @@ def frames_match(a: pd.DataFrame, b: pd.DataFrame, round_dp: int = 2) -> tuple[b
 
 class Validator:
     def __init__(self, spark: SparkSession, parquet_dir: Path, round_dp: int = 2):
+        import duckdb  # lazy: only the DuckDB-vs-Spark oracle needs it
         self.spark = spark
         self.parquet_dir = Path(parquet_dir)
         self.round_dp = round_dp
