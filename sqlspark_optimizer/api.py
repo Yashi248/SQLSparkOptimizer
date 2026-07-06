@@ -41,13 +41,14 @@ class OptimizeResult:
         return self.status == "reverted"
 
 
-def optimize(sql: str, spark: SparkSession, parquet_dir: str | Path, *,
+def optimize(sql: str, spark: SparkSession, parquet_dir: str | Path | None = None, *,
              source_dialect: str = "spark", timing_runs: int = 3,
              use_llm_explain: bool = True) -> OptimizeResult:
-    """Optimize one query. `parquet_dir` is where the tables' Parquet lives (used
-    for the broadcast size heuristic). Tables must already be registered on
-    `spark` as temp views matching the query's table names."""
-    graph = OptimizerGraph(spark, Path(parquet_dir), source_dialect=source_dialect,
+    """Optimize one query. Tables must already be accessible on `spark` (temp
+    views or catalog tables). `parquet_dir` is optional — only a local fallback
+    for table sizing; on a real cluster sizing comes from Spark's stats."""
+    pq = Path(parquet_dir) if parquet_dir else None
+    graph = OptimizerGraph(spark, pq, source_dialect=source_dialect,
                            timing_runs=timing_runs, use_llm_explain=use_llm_explain)
     final = graph.build().invoke({"source_sql": sql})
     return OptimizeResult(

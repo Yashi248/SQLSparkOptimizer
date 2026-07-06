@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import sqlglot
+from sqlglot import exp
 from pyspark.sql import SparkSession
 
 from sqlspark_optimizer.observability.tracing import traced
@@ -32,8 +34,13 @@ from sqlspark_optimizer.observability.tracing import traced
 # legitimate broadcast candidate.
 BROADCAST_THRESHOLD_BYTES = 10 * 1024 * 1024
 
-# Physical join operators that shuffle (i.e. NOT already broadcast).
-SHUFFLE_JOIN_OPS = ("SortMergeJoin", "ShuffledHashJoin")
+# Spark reports sizeInBytes = Long.MaxValue when it can't estimate — ignore that.
+_UNKNOWN_SIZE = 1 << 62
+
+# Physical join operators that shuffle (NOT already broadcast). Includes Photon
+# (Databricks) variants so the analyzer works on a Photon-enabled cluster too.
+SHUFFLE_JOIN_OPS = ("SortMergeJoin", "ShuffledHashJoin",
+                    "PhotonShuffledHashJoin", "PhotonSortMergeJoin")
 
 
 @dataclass
@@ -101,10 +108,12 @@ class AnalysisResult:
 
 
 class PlanAnalyzer:
-    def __init__(self, spark: SparkSession, parquet_dir: Path,
+    def __init__(self, spark: SparkSession, parquet_dir: Path | None = None,
                  threshold_bytes: int = BROADCAST_THRESHOLD_BYTES):
         self.spark = spark
-        self.parquet_dir = Path(parquet_dir)
+        # Optional: only used as a local fallback for sizing. On Databricks (no
+        # local Parquet) sizing comes from Spark's own table stats instead.
+        self.parquet_dir = Path(parquet_dir) if parquet_dir else None
         self.threshold_bytes = threshold_bytes
 
     @traced("plan_analyzer")
@@ -115,7 +124,7 @@ class PlanAnalyzer:
 
         nodes = self._parse_nodes(plan_text)
         shuffle_joins = [n.detail for n in nodes if n.op in SHUFFLE_JOIN_OPS]
-        scanned = self._scanned_table_sizes(plan_text)
+        scanned = self._scanned_table_sizes(spark_sql)
 
         # A table is a broadcast candidate if it's scanned, small, AND the plan
         # is currently shuffle-joining (otherwise there's nothing to fix).
@@ -149,13 +158,43 @@ class PlanAnalyzer:
                 nodes.append(PlanNode(op=m.group(1), detail=line))
         return nodes
 
-    def _scanned_table_sizes(self, plan_text: str) -> dict[str, int]:
-        """Find which TPC-H tables the plan scans (by the Parquet paths in the
-        FileScan lines) and look up each file's on-disk size."""
+    def _scanned_table_sizes(self, spark_sql: str) -> dict[str, int]:
+        """Size every table the query references. Portable across environments:
+        table names come from the SQL, sizes from Spark's own stats (works for
+        local temp views AND Databricks catalog/Delta tables), with local Parquet
+        as a fallback."""
         sizes: dict[str, int] = {}
-        # FileScan lines reference the parquet location, e.g. .../tpch/nation.parquet
-        for tbl in re.findall(r"([a-z]+)\.parquet", plan_text):
-            path = self.parquet_dir / f"{tbl}.parquet"
-            if path.exists() and tbl not in sizes:
-                sizes[tbl] = os.path.getsize(path)
+        for tbl in self._tables_in(spark_sql):
+            size = self._table_size(tbl)
+            if size is not None:
+                sizes[tbl] = size
         return sizes
+
+    @staticmethod
+    def _tables_in(spark_sql: str) -> set[str]:
+        """Table names referenced in the query (via the AST — dialect/engine
+        agnostic)."""
+        try:
+            tree = sqlglot.parse_one(spark_sql, read="spark")
+            return {t.name for t in tree.find_all(exp.Table)}
+        except Exception:  # noqa: BLE001
+            return set()
+
+    def _table_size(self, tbl: str) -> int | None:
+        """Bytes for a table. Prefer Spark's estimate (portable); fall back to the
+        local Parquet file if present."""
+        # 1) Spark's own size estimate — the catalog/Delta stats on Databricks,
+        #    or summed file sizes for a local file-backed temp view.
+        try:
+            stats = self.spark.table(tbl)._jdf.queryExecution().optimizedPlan().stats()
+            size = int(stats.sizeInBytes())
+            if 0 < size < _UNKNOWN_SIZE:
+                return size
+        except Exception:  # noqa: BLE001 - not resolvable / no stats -> try fallback
+            pass
+        # 2) Local Parquet fallback (our TPC-H demo data).
+        if self.parquet_dir is not None:
+            path = self.parquet_dir / f"{tbl}.parquet"
+            if path.exists():
+                return os.path.getsize(path)
+        return None

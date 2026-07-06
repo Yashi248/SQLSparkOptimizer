@@ -123,7 +123,7 @@ def detect_symptoms(spark_sql: str, analysis: AnalysisResult,
 
 
 class OptimizerGraph:
-    def __init__(self, spark, parquet_dir, source_dialect: str = "spark",
+    def __init__(self, spark, parquet_dir=None, source_dialect: str = "spark",
                  timing_runs: int = 3, use_llm_explain: bool = True):
         self.spark = spark
         self.translator = Translator(source_dialect=source_dialect)

@@ -9,7 +9,9 @@ import time
 
 from pyspark.sql import SparkSession
 
-JOIN_OPS = ("SortMergeJoin", "ShuffledHashJoin", "BroadcastHashJoin")
+# Includes Photon (Databricks) variants so plan diffs work on a Photon cluster.
+JOIN_OPS = ("SortMergeJoin", "ShuffledHashJoin", "BroadcastHashJoin",
+            "PhotonSortMergeJoin", "PhotonShuffledHashJoin", "PhotonBroadcastHashJoin")
 
 
 def time_query(spark: SparkSession, sql: str, runs: int = 3) -> float:
