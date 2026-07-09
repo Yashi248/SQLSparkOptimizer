@@ -58,9 +58,9 @@ If a deterministic rule fits, it's applied and proven. If none fits, the system 
 | avg convergence iterations     | 1.83      |
 | optimizer cost                 | $0        |
 
-_Honest note:_ join optimizations win big (up to 4.3×); pushdown rewrites are output-correct but runtime-flat unless the data is clustered by the filter column (row-group skipping). The plan-level win is always real; the runtime win is data-dependent.
-
-**At scale:** analyze-only triage runs at **~155 ms/query** → a **1,000-query workload audits in ~2.6 min** (opportunities found in ~68%); expensive validation runs only on the top-K. **On Databricks:** ran unmodified on a serverless cluster (via Spark Connect) — detected + rewrote a pushdown anti-pattern, proved the output identical, **1.54× via Delta data-skipping**.
+- **Joins win big** (up to 4.3×); **pushdown** is always output-correct, but its runtime win needs storage that supports data-skipping, flat on plain Parquet, **1.54× on Delta**.
+- **At scale:** ~155 ms/query triage → a **1,000-query workload audits in ~2.6 min** (opportunities in ~68%); full validation runs only on the top-K.
+- **On Databricks:** ran unmodified on serverless (Spark Connect) - detected, rewrote, and proved a pushdown fix identical.
 
 ## Quickstart
 
@@ -137,6 +137,6 @@ PySpark · DuckDB · SQLGlot · LangGraph · MLflow · pgvector · Neo4j · sent
 
 ## Status
 
-Feature-complete: full pipeline, **LLM escalation** for novel anti-patterns, **real-query ingestion** (dir / `.sql` / `.json` / `.csv`), **web UI + plan visualizer**, **1,000-query scale triage**, and a **validated run on Databricks serverless** — **36 tests passing**.
+Feature-complete: full pipeline, **LLM escalation** for novel anti-patterns, **real-query ingestion** (dir / `.sql` / `.json` / `.csv`), **web UI + plan visualizer**, **1,000-query scale triage**, and a **validated run on Databricks serverless** - **36 tests passing**.
 
 See [`docs/design-rationale.md`](docs/design-rationale.md) for the _why_ behind every decision and [`docs/learning-notes.md`](docs/learning-notes.md) for the concepts.
