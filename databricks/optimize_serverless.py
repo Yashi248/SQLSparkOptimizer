@@ -21,11 +21,13 @@ dbutils.library.restartPython()
 from pyspark.sql import functions as F
 
 # ~5M rows, ship_date spread across 1992–1997, plus a price column.
+# Persist as a Delta TABLE (not an in-memory view) so the scan is file-based —
+# only then does the pushed-down filter show up in `PushedFilters`.
 spark.range(0, 5_000_000) \
     .withColumn("ship_date", F.date_add(F.lit("1992-01-01").cast("date"),
                                         (F.col("id") % 2000).cast("int"))) \
     .withColumn("price", (F.col("id") % 1000).cast("double")) \
-    .createOrReplaceTempView("sales")
+    .write.mode("overwrite").saveAsTable("sales")
 
 # COMMAND ----------
 # MAGIC %md ### Optimize — the non-sargable YEAR() filter gets rewritten + validated
