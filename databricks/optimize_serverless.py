@@ -31,6 +31,8 @@ spark.range(0, 5_000_000) \
 # MAGIC %md ### Optimize — the non-sargable YEAR() filter gets rewritten + validated
 
 # COMMAND ----------
+import os
+os.environ["SQLSPARK_DISABLE_TELEMETRY"] = "1"  # skip MLflow on Databricks serverless
 from sqlspark_optimizer import optimize
 
 sql = "SELECT SUM(price) AS revenue FROM sales WHERE YEAR(ship_date) = 1994"

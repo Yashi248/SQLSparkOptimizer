@@ -42,6 +42,8 @@ spark.range(0, 500).withColumnRenamed("id", "k") \
 # MAGIC No `parquet_dir` needed: table sizing comes from Spark's own stats.
 
 # COMMAND ----------
+import os
+os.environ["SQLSPARK_DISABLE_TELEMETRY"] = "1"  # skip MLflow on Databricks
 from sqlspark_optimizer import optimize
 
 sql = ("SELECT d.name, COUNT(*) AS c "

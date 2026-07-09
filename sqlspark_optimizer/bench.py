@@ -26,8 +26,12 @@ def time_query(spark: SparkSession, sql: str, runs: int = 3) -> float:
 
 
 def executed_plan(spark: SparkSession, sql: str) -> str:
-    """The physical plan Spark will actually run, as text."""
-    return spark.sql(sql)._jdf.queryExecution().executedPlan().toString()
+    """The physical plan text. Uses the SQL EXPLAIN command so it works on BOTH
+    classic Spark and Spark Connect / serverless (where the `_jdf` JVM attribute
+    is blocked). The output still contains the operators + PushedFilters our
+    parsers look for."""
+    plan_sql = "EXPLAIN " + sql.strip().rstrip(";")
+    return spark.sql(plan_sql).collect()[0][0]
 
 
 def join_ops(plan_text: str) -> list[str]:

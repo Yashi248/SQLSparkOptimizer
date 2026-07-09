@@ -58,6 +58,11 @@ def init_mlflow() -> bool:
     global _enabled
     if _enabled is not None:
         return _enabled
+    # Hard off-switch — e.g. on Databricks serverless, where touching MLflow reads
+    # a blocked Spark config and logs a noisy (but non-fatal) error.
+    if os.environ.get("SQLSPARK_DISABLE_TELEMETRY"):
+        _enabled = False
+        return False
     if not _server_reachable(TRACKING_URI):
         print(f"[observability] MLflow not reachable at {TRACKING_URI} - "
               f"running WITHOUT telemetry. Start `mlflow ui` to capture it.")

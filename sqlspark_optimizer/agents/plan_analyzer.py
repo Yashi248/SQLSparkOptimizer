@@ -118,9 +118,9 @@ class PlanAnalyzer:
 
     @traced("plan_analyzer")
     def analyze(self, spark_sql: str) -> AnalysisResult:
-        df = self.spark.sql(spark_sql)
-        # The executed plan = what Spark will actually run (post optimizer/AQE planning).
-        plan_text = df._jdf.queryExecution().executedPlan().toString()
+        # Plan text via SQL EXPLAIN — works on classic AND serverless (Spark Connect).
+        from sqlspark_optimizer.bench import executed_plan
+        plan_text = executed_plan(self.spark, spark_sql)
 
         nodes = self._parse_nodes(plan_text)
         shuffle_joins = [n.detail for n in nodes if n.op in SHUFFLE_JOIN_OPS]
