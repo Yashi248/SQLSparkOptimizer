@@ -60,6 +60,8 @@ If a deterministic rule fits, it's applied and proven. If none fits, the system 
 
 _Honest note:_ join optimizations win big (up to 4.3×); pushdown rewrites are output-correct but runtime-flat unless the data is clustered by the filter column (row-group skipping). The plan-level win is always real; the runtime win is data-dependent.
 
+**At scale:** analyze-only triage runs at **~155 ms/query** → a **1,000-query workload audits in ~2.6 min** (opportunities found in ~68%); expensive validation runs only on the top-K. **On Databricks:** ran unmodified on a serverless cluster (via Spark Connect) — detected + rewrote a pushdown anti-pattern, proved the output identical, **1.54× via Delta data-skipping**.
+
 ## Quickstart
 
 ```bash
@@ -135,6 +137,6 @@ PySpark · DuckDB · SQLGlot · LangGraph · MLflow · pgvector · Neo4j · sent
 
 ## Status
 
-Core pipeline (Phases 0-4), **LLM escalation** for novel anti-patterns, **real-query ingestion** (dir / `.sql` / `.json` / `.csv`), and the **web UI + plan visualizer** are complete passing 31 tests. Next: whole-workload scale testing (1,000+ queries) and a Databricks validation run.
+Feature-complete: full pipeline, **LLM escalation** for novel anti-patterns, **real-query ingestion** (dir / `.sql` / `.json` / `.csv`), **web UI + plan visualizer**, **1,000-query scale triage**, and a **validated run on Databricks serverless** — **36 tests passing**.
 
 See [`docs/design-rationale.md`](docs/design-rationale.md) for the _why_ behind every decision and [`docs/learning-notes.md`](docs/learning-notes.md) for the concepts.
