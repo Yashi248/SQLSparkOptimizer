@@ -224,6 +224,26 @@ foundation the instant nodes become LLM-backed (cost routing). It's also the
 industry-standard multi-agent framework, so the "orchestrated with LangGraph"
 framing is both truthful and a real signal.
 
+## LangChain vs LangGraph (and why we used LangGraph)
+Same ecosystem/team, different jobs — often confused.
+- **LangChain** = **components** (LLM wrappers, prompt templates, output parsers,
+  retrievers, memory) + **linear composition** (LCEL chains: `prompt | llm | parser`)
+  + **agents** (an LLM decides which tool to call next, in a loop).
+- **LangGraph** = **stateful orchestration as a graph**: nodes + edges + shared
+  state, with **loops and conditional branching first-class**. It exists because
+  chains can't express cycles/branches and agent loops are hard to control.
+
+They're complementary — LangChain components can live inside LangGraph nodes.
+
+**Why LangGraph here:** our flow is a *cycle* (optimize→validate→re-analyze) with a
+3-way *branch* (`decide()` → loop / escalate / explain) and **deterministic**
+routing. LangChain **chains** are linear (can't loop/branch). A LangChain **agent**
+*could* loop, but it puts an **LLM in the driver's seat** deciding the control
+flow — we don't want that: our routing is rule-based (cheaper, reliable, guaranteed
+to terminate), and an LLM-driven loop is harder to inspect. LangGraph's conditional
+edges map directly to our `decide()`. (If the flow were a simple linear
+prompt→LLM→parse, LangChain LCEL would've been the simpler pick.)
+
 ## Decorators & `@traced`
 A **decorator** wraps a function to add behavior without editing the function.
 `@traced("translator")` over `translate()` makes Python do
