@@ -370,18 +370,18 @@ the Delta table keeps per-file min/max stats, so the pushed-down range enabled
 **data skipping** — a real-world confirmation that pushdown's runtime benefit
 depends on the storage layer supporting skipping, which Delta does.
 
-## Phases ahead (rationale to fill in as we build)
+## Future directions
 
-- **Neo4j (deferred on purpose):** the analyzer already emits a plan graph in
-  memory; Neo4j's payoff is the *visualizer*, so we add it when that's the feature,
-  not before. Avoids infra that doesn't change the core result.
-- **pgvector RAG:** earns its place only once multiple patterns exist to retrieve
-  among. Then it's a swap-in, not a rewrite.
-- **Cost routing:** run the mechanical step (translation) on a cheap/local model and
-  the reasoning step (optimization) on a smarter one — demonstrates "right-sized
-  model per stage" and measures cost per stage. (Translation being trivial *proves*
-  this thesis rather than undercutting it.)
-- **Eval layer:** turns the always-on telemetry into published numbers —
-  correctness %, speedup, cost/stage, convergence. The deliverable as much as code.
-- **Next patterns to prioritize:** predicate pushdown, partition pruning, caching —
-  chosen specifically because AQE does *not* do them, making the value undeniable.
+The core is complete (all phases, escalation, ingestion, web UI, scale triage,
+Databricks-validated). Natural next steps, ordered by value:
+
+- **More optimization patterns** — partition pruning, caching a reused subquery,
+  join reordering. Chosen specifically because AQE/Photon do *not* do them. Each is
+  one Rule in the registry + one knowledge doc.
+- **Self-improving loop** — feed *accepted* LLM escalations back as candidate new
+  deterministic rules, so the system's known-90% grows over time.
+- **Difficulty-based routing** — a cheap pre-classifier sends trivial queries down a
+  fast path, reserving the full pipeline (and any LLM cost) for hard ones.
+- **Publish to PyPI** — `pip install sqlspark-optimizer` instead of from source.
+- **Broaden Databricks** — broadcast pattern on a classic cluster; size from catalog
+  stats; match more Photon operator names.

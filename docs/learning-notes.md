@@ -143,6 +143,21 @@ to make the value undeniable.
 - We read the plan via `df._jdf.queryExecution().executedPlan().toString()` — the
   `_jdf` reaches through Py4J into the JVM DataFrame to get the executed plan text.
 
+## Classic Spark vs Spark Connect / serverless (Databricks)
+- **Classic cluster:** the Python driver talks to a **JVM** in-process. You can reach
+  into it via `df._jdf` (the underlying Java DataFrame) to grab the executed plan,
+  stats, etc. You also control Spark configs (disable AQE, set broadcast threshold).
+- **Spark Connect / serverless:** the client talks to a **remote** Spark over gRPC —
+  there is **no local JVM**, so `_jdf` is **blocked**, and many configs are locked
+  for you (managed, multi-tenant). Instant start, no cluster to manage.
+
+**What this forced (portability lesson):** we replaced `_jdf.queryExecution()
+.executedPlan().toString()` with the SQL **`EXPLAIN`** command — pure SQL, works on
+both. Table sizing (which used `_jdf` stats) degrades gracefully; the pushdown
+pattern is detected from the SQL itself, so it works either way. Moral: don't reach
+into engine internals if a portable API (SQL) gets you the same thing — it's what
+lets the tool run unmodified on classic *and* serverless.
+
 ## Parquet — why all our data is `.parquet`
 - **Columnar** storage: values of one column stored together. Reading 2 of 16
   columns reads only those 2 → less I/O.
