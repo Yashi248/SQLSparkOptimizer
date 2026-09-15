@@ -66,7 +66,10 @@ class ModelRouter:
     @property
     def llm_available(self) -> bool:
         """True if any real model (not just the template) can be reached — used to
-        decide whether LLM escalation is worth attempting."""
+        decide whether LLM escalation is worth attempting. `SQLSPARK_DISABLE_LLM`
+        forces it off (deterministic runs, e.g. the CI eval gate)."""
+        if os.environ.get("SQLSPARK_DISABLE_LLM"):
+            return False
         return self._openai is not None or self._gemini is not None or self._ollama_up
 
     # --- public API --------------------------------------------------------- #

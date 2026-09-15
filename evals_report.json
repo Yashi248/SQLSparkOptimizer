@@ -1,0 +1,8 @@
+{
+  "cases": 6,
+  "correctness_rate": 1.0,
+  "routing_accuracy": 1.0,
+  "avg_speedup": 1.949,
+  "avg_iterations": 1.83,
+  "total_cost_usd": 0.0
+}

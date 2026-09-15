@@ -1,5 +1,7 @@
 # SQLSpark Optimizer
 
+[![CI](https://github.com/Yashi248/SQLSparkOptimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/Yashi248/SQLSparkOptimizer/actions/workflows/ci.yml)
+
 **A multi-agent system that optimizes SQL→PySpark queries and _proves the output is still correct_ with an evaluation layer that measures routing, cost, and speedup at every stage.**
 
 Most query-optimizer demos _transform_ a query. This one proves each transformation is output-identical and measures what it costs(the part those demos skip).
