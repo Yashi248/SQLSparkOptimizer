@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Optional, Protocol
 
 import sqlglot
@@ -139,6 +140,49 @@ class SubstringPrefixRule(_AstRewriteRule):
         return exp.paren(sqlglot.condition(f"{cs} LIKE '{prefix}%'", dialect="spark")), cs
 
 
+class SargableDateRule(_AstRewriteRule):
+    """CAST(col AS DATE) = 'YYYY-MM-DD'  (also the DATE(col) spelling)  ->
+    col >= DATE 'YYYY-MM-DD' AND col < DATE '<next day>'.
+
+    The day-truncation sibling of SargableYearRule. Provably output-identical
+    whether col is a DATE (the cast is a no-op and the half-open range collapses
+    to equality) or a TIMESTAMP (both sides select exactly the [midnight, next
+    midnight) window), and the bare column pushes into the scan.
+
+    JOB's filters are on plain integer years, so this rule doesn't carry JOB
+    coverage - it's here as a second sargability pattern so the registry (and the
+    retrieval problem over it) has more than one rewrite to choose between.
+    """
+    name = "sargable_date"
+
+    def _rewrite_eq(self, node: exp.EQ):
+        cast, lit = _match(node, exp.Cast,
+                           lambda l: l.is_string and _is_iso_date(l.name))
+        # exp.Cast also covers CAST(... AS DATE); guard the target type here.
+        if cast is None or cast.to.this != exp.DataType.Type.DATE:
+            return None
+        col = cast.find(exp.Column)
+        if col is None:
+            return None
+        d = date.fromisoformat(lit.name)
+        nxt = d + timedelta(days=1)
+        cs = col.sql(dialect="spark")
+        rng = sqlglot.condition(
+            f"{cs} >= CAST('{d.isoformat()}' AS DATE) "
+            f"AND {cs} < CAST('{nxt.isoformat()}' AS DATE)",
+            dialect="spark",
+        )
+        return exp.paren(rng), cs
+
+
+def _is_iso_date(s: str) -> bool:
+    try:
+        date.fromisoformat(s)
+        return True
+    except ValueError:
+        return False
+
+
 def _match(node: exp.EQ, fn_type, lit_ok):
     """If one side of `node` is an instance of `fn_type` and the other a Literal
     satisfying `lit_ok`, return (fn_node, literal); else (None, None)."""
@@ -152,5 +196,6 @@ def _match(node: exp.EQ, fn_type, lit_ok):
 DEFAULT_RULES: list[Rule] = [
     BroadcastJoinRule(),
     SargableYearRule(),
+    SargableDateRule(),
     SubstringPrefixRule(),
 ]

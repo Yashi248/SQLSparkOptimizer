@@ -55,6 +55,19 @@ PATTERNS = [
                     "function wrapping column, non-sargable filter, date range",
     },
     {
+        "rule": "sargable_date",
+        "title": "Sargable day predicate",
+        "symptom": "A filter truncates a date/timestamp column to a day with "
+                   "CAST(col AS DATE)='YYYY-MM-DD' or DATE(col)='YYYY-MM-DD', which "
+                   "is non-sargable and blocks predicate pushdown, so Spark scans "
+                   "every row before filtering.",
+        "fix": "Rewrite to a half-open range: col >= DATE 'YYYY-MM-DD' AND col < "
+               "DATE '<next day>' so the filter pushes into the scan.",
+        "keywords": "predicate pushdown, sargable predicate, CAST to date, DATE "
+                    "function on timestamp, day truncation, function wrapping "
+                    "column, non-sargable filter, date range",
+    },
+    {
         "rule": "substring_prefix",
         "title": "Substring prefix to LIKE",
         "symptom": "A filter uses SUBSTRING on a string column to test a leading "
